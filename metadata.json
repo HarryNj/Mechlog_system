@@ -1,0 +1,6 @@
+{
+  "name": "Mechanic Spare Log System",
+  "description": "EFF Zambia Fleet Maintenance and automated spare stock tracking system.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
