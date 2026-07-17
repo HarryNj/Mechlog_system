@@ -40,8 +40,15 @@ async function startServer() {
   // Sync user profile with PostgreSQL on Sign-In
   app.post("/api/auth/sync", requireAuth, async (req: AuthRequest, res) => {
     try {
-      const { uid, email, name } = req.user!;
-      const user = await getOrCreateUser(uid, email || "", name || undefined);
+      const { uid, email, name, phone_number } = req.user!;
+      const clientPhone = req.body?.phoneNumber || req.body?.phone;
+      const clientName = req.body?.name;
+      const user = await getOrCreateUser(
+        uid, 
+        email || req.body?.email || "", 
+        name || clientName || undefined, 
+        phone_number || clientPhone || undefined
+      );
       res.json({ status: "success", user });
     } catch (error: any) {
       console.error("Error syncing user:", error);
@@ -460,7 +467,7 @@ async function startServer() {
       if (!dbUser[0] || dbUser[0].role !== "admin") {
         return res.status(403).json({ error: "Forbidden: Admins only" });
       }
-      const { email, name, role } = req.body;
+      const { email, name, role, phoneNumber } = req.body;
       if (!email || !role) {
         return res.status(400).json({ error: "Email and Role are required" });
       }
@@ -478,6 +485,7 @@ async function startServer() {
         uid: dummyUid,
         email: lowerEmail,
         name: name || null,
+        phoneNumber: phoneNumber || null,
         role: role || "user"
       }).returning();
 
@@ -495,7 +503,7 @@ async function startServer() {
         return res.status(403).json({ error: "Forbidden: Admins only" });
       }
       const userId = parseInt(req.params.id);
-      const { name, role, email } = req.body;
+      const { name, role, email, phoneNumber } = req.body;
       
       const lowerEmail = email ? email.trim().toLowerCase() : undefined;
       
@@ -503,7 +511,8 @@ async function startServer() {
         .set({
           name,
           role,
-          email: lowerEmail
+          email: lowerEmail,
+          phoneNumber: phoneNumber || null
         })
         .where(eq(users.id, userId))
         .returning();

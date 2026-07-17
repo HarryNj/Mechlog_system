@@ -27,8 +27,15 @@ import {
   Wrench
 } from "lucide-react";
 import * as XLSX from "xlsx";
-import { auth, googleAuthProvider } from "./lib/firebase.ts";
-import { signInWithPopup, signOut, onAuthStateChanged, User as FirebaseUser } from "firebase/auth";
+import { auth } from "./lib/firebase.ts";
+import { 
+  signOut, 
+  onAuthStateChanged, 
+  User as FirebaseUser,
+  createUserWithEmailAndPassword,
+  signInWithEmailAndPassword,
+  updateProfile
+} from "firebase/auth";
 // @ts-ignore
 import effLogo from "./assets/images/eff_logo_1784229618019.jpg";
 
@@ -139,6 +146,7 @@ interface UserDBType {
   uid: string;
   email: string;
   name: string | null;
+  phoneNumber: string | null;
   role: "admin" | "user";
   createdAt?: string;
 }
@@ -249,6 +257,14 @@ const isIframe = typeof window !== "undefined" && window.self !== window.top;
 
 export default function App() {
   const [user, setUser] = useState<FirebaseUser | null>(null);
+  const [authMode, setAuthMode] = useState<"signin" | "register">("signin");
+  const [authEmail, setAuthEmail] = useState("");
+  const [authPassword, setAuthPassword] = useState("");
+  const [authName, setAuthName] = useState("");
+  const [authPhone, setAuthPhone] = useState("");
+  const [authError, setAuthError] = useState("");
+  const [authLoading, setAuthLoading] = useState(false);
+  
   const [loading, setLoading] = useState(true);
   const [syncing, setSyncing] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
@@ -282,7 +298,7 @@ export default function App() {
   // User Modals & Forms
   const [userModalOpen, setUserModalOpen] = useState(false);
   const [editingUser, setEditingUser] = useState<UserDBType | null>(null);
-  const [userForm, setUserForm] = useState({ email: "", name: "", role: "user" });
+  const [userForm, setUserForm] = useState({ email: "", name: "", phoneNumber: "", role: "user" });
 
   // Service Request Modals & Forms
   const [requestModalOpen, setRequestModalOpen] = useState(false);
@@ -327,7 +343,7 @@ export default function App() {
   }, []);
 
   // Sync authenticated user to PostgreSQL database
-  const syncUser = async (currentUser: FirebaseUser) => {
+  const syncUser = async (currentUser: FirebaseUser, overrideName?: string, overridePhone?: string) => {
     try {
       const token = await currentUser.getIdToken();
       const res = await fetch("/api/auth/sync", {
@@ -335,7 +351,12 @@ export default function App() {
         headers: {
           "Content-Type": "application/json",
           "Authorization": `Bearer ${token}`
-        }
+        },
+        body: JSON.stringify({
+          name: overrideName || authName || undefined,
+          phoneNumber: overridePhone || authPhone || undefined,
+          email: currentUser.email
+        })
       });
       if (res.ok) {
         const data = await res.json();
@@ -401,23 +422,69 @@ export default function App() {
     }
   };
 
-  // Handle Authentication Trigger
-  const handleSignIn = async () => {
+  // Handle Email/Password Sign-In
+  const handleEmailSignIn = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!authEmail || !authPassword) {
+      setAuthError("Email and password are required");
+      return;
+    }
+    setAuthLoading(true);
+    setAuthError("");
     try {
-      setLoading(true);
-      await signInWithPopup(auth, googleAuthProvider);
+      await signInWithEmailAndPassword(auth, authEmail.trim(), authPassword);
+      // After success, onAuthStateChanged handles the rest
     } catch (err: any) {
       console.error("Sign-in failed:", err);
-      setLoading(false);
-      let errorMsg = "Sign-in failed. This is usually caused by browser security settings, blocking third-party cookies, or running inside a preview iframe.";
-      if (err?.code === "auth/popup-blocked") {
-        errorMsg = "The sign-in popup was blocked by your browser. Please allow popups for this site and try again.";
-      } else if (err?.code === "auth/cancelled-popup-request") {
-        errorMsg = "The sign-in popup was closed before completing authentication. Please try again.";
-      } else if (err?.code === "auth/network-request-failed") {
-        errorMsg = "Network error. Please check your internet connection.";
+      let errorMsg = "Incorrect email or password. Please try again.";
+      if (err?.code === "auth/user-not-found" || err?.code === "auth/wrong-password" || err?.code === "auth/invalid-credential") {
+        errorMsg = "Invalid email or password.";
+      } else if (err?.code === "auth/invalid-email") {
+        errorMsg = "Invalid email address format.";
+      } else if (err?.code === "auth/too-many-requests") {
+        errorMsg = "Too many failed attempts. Access to this account has been temporarily disabled.";
       }
-      alert(`${errorMsg}\n\nTIP: If you are using the AI Studio preview, please open the app in a new tab by clicking 'Open in New Tab' at the top-right of your screen, or use the direct link below.`);
+      setAuthError(errorMsg);
+    } finally {
+      setAuthLoading(false);
+    }
+  };
+
+  // Handle Email/Password/Name/Phone Register
+  const handleEmailRegister = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!authEmail || !authPassword || !authName || !authPhone) {
+      setAuthError("All fields (Name, Email, Phone Number, Password) are required");
+      return;
+    }
+    if (authPassword.length < 6) {
+      setAuthError("Password must be at least 6 characters long");
+      return;
+    }
+    setAuthLoading(true);
+    setAuthError("");
+    try {
+      const userCredential = await createUserWithEmailAndPassword(auth, authEmail.trim(), authPassword);
+      const createdUser = userCredential.user;
+      
+      // Update displayName in Firebase profile
+      await updateProfile(createdUser, { displayName: authName.trim() });
+      
+      // Sync immediately with the DB
+      await syncUser(createdUser, authName.trim(), authPhone.trim());
+    } catch (err: any) {
+      console.error("Registration failed:", err);
+      let errorMsg = "Failed to create account. Please try again.";
+      if (err?.code === "auth/email-already-in-use") {
+        errorMsg = "An account with this email already exists.";
+      } else if (err?.code === "auth/invalid-email") {
+        errorMsg = "Invalid email address format.";
+      } else if (err?.code === "auth/weak-password") {
+        errorMsg = "Password is too weak. Please choose a password of at least 6 characters.";
+      }
+      setAuthError(errorMsg);
+    } finally {
+      setAuthLoading(false);
     }
   };
 
@@ -436,11 +503,12 @@ export default function App() {
       setUserForm({
         email: selectedUser.email,
         name: selectedUser.name || "",
+        phoneNumber: selectedUser.phoneNumber || "",
         role: selectedUser.role
       });
     } else {
       setEditingUser(null);
-      setUserForm({ email: "", name: "", role: "user" });
+      setUserForm({ email: "", name: "", phoneNumber: "", role: "user" });
     }
     setUserModalOpen(true);
   };
@@ -1061,57 +1129,183 @@ export default function App() {
           </p>
         </div>
 
-        <div className="mt-8 sm:mx-auto sm:w-full sm:max-w-md relative z-10">
+        <div className="mt-8 sm:mx-auto sm:w-full sm:max-w-md relative z-10 px-4 sm:px-0">
           <div className="bg-slate-800 py-8 px-4 shadow-xl rounded-2xl sm:px-10 border border-slate-700/50">
-            <div className="space-y-6">
-              <p className="text-sm text-center text-slate-300">
-                Sign in with your Google workspace account to manage bikes, service logs, and spares inventory with automated stock tracking.
-              </p>
+            {authMode === "signin" ? (
+              <form onSubmit={handleEmailSignIn} className="space-y-5">
+                <div>
+                  <h3 className="text-xl font-bold text-white text-center">Sign In</h3>
+                  <p className="text-xs text-slate-400 text-center mt-1">Access your fleet maintenance dashboard</p>
+                </div>
 
-              <button
-                onClick={handleSignIn}
-                id="btn-sign-in"
-                className="w-full flex justify-center items-center gap-3 px-4 py-3 border border-transparent rounded-xl shadow-sm text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 transition-all cursor-pointer font-semibold shadow-blue-500/20"
-              >
-                <svg className="w-5 h-5" viewBox="0 0 24 24" fill="currentColor">
-                  <path d="M12.24 10.285V13.4h6.887c-.275 1.565-1.88 4.604-6.887 4.604-4.33 0-7.859-3.578-7.859-8s3.529-8 7.859-8c2.46 0 4.105 1.025 5.047 1.926l2.427-2.334C17.955 2.192 15.34 1 12.24 1 6.133 1 1.2 5.933 1.2 12s4.933 11 11.04 11c6.372 0 10.596-4.485 10.596-10.79 0-.726-.075-1.285-.164-1.925H12.24z"/>
-                </svg>
-                Sign in with Google
-              </button>
+                {authError && (
+                  <div className="p-3 bg-rose-500/10 border border-rose-500/20 rounded-xl text-rose-400 text-xs flex gap-2">
+                    <span className="font-bold">⚠️</span>
+                    <span>{authError}</span>
+                  </div>
+                )}
 
-              {isIframe && (
-                <div className="mt-4 p-4 rounded-xl bg-amber-500/10 border border-amber-500/30 text-left">
-                  <div className="flex gap-2.5">
-                    <span className="text-amber-400 font-bold text-sm mt-0.5">⚠️</span>
-                    <div>
-                      <h4 className="text-xs font-bold text-amber-400 uppercase tracking-wide">Preview Mode Restriction</h4>
-                      <p className="text-slate-300 text-xs mt-1 leading-relaxed">
-                        Google Sign-In might be blocked by your browser's third-party cookie restrictions because this app is currently inside an iframe.
-                      </p>
-                      <a
-                        href={typeof window !== "undefined" ? window.location.href : "#"}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="inline-flex items-center gap-1.5 mt-2.5 px-3 py-1.5 rounded-lg bg-amber-500 hover:bg-amber-600 text-slate-950 text-xs font-bold transition-all cursor-pointer shadow-sm hover:scale-[1.02] active:scale-[0.98]"
-                      >
-                        Open App in New Tab to Sign In
-                      </a>
+                <div className="space-y-4">
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-300 uppercase tracking-wider mb-1.5">Email Address</label>
+                    <div className="relative">
+                      <input
+                        type="email"
+                        required
+                        placeholder="name@effzambia.org"
+                        value={authEmail}
+                        onChange={(e) => setAuthEmail(e.target.value)}
+                        className="w-full px-4 py-3 bg-slate-900 border border-slate-700 rounded-xl text-sm text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500/40 focus:border-blue-500 transition-all"
+                      />
                     </div>
                   </div>
-                </div>
-              )}
 
-              <div className="pt-4 border-t border-slate-700/50 text-center">
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-300 uppercase tracking-wider mb-1.5">Password</label>
+                    <input
+                      type="password"
+                      required
+                      placeholder="••••••••"
+                      value={authPassword}
+                      onChange={(e) => setAuthPassword(e.target.value)}
+                      className="w-full px-4 py-3 bg-slate-900 border border-slate-700 rounded-xl text-sm text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500/40 focus:border-blue-500 transition-all"
+                    />
+                  </div>
+                </div>
+
                 <button
-                  type="button"
-                  onClick={() => setAgreementModalOpen(true)}
-                  id="btn-agreement-terms-login"
-                  className="inline-flex items-center gap-2 text-xs text-slate-400 hover:text-white transition-colors cursor-pointer"
+                  type="submit"
+                  disabled={authLoading}
+                  className="w-full flex justify-center items-center gap-2 px-4 py-3 border border-transparent rounded-xl shadow-sm text-sm font-semibold text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 transition-all cursor-pointer disabled:opacity-50"
                 >
-                  <Shield className="w-3.5 h-3.5 text-blue-400 animate-pulse-subtle" />
-                  Software Agreement & Terms
+                  {authLoading ? (
+                    <>
+                      <RefreshCw className="w-4 h-4 animate-spin" />
+                      Signing In...
+                    </>
+                  ) : (
+                    "Sign In"
+                  )}
                 </button>
-              </div>
+
+                <div className="text-center pt-2">
+                  <p className="text-xs text-slate-400">
+                    Don't have an account?{" "}
+                    <button
+                      type="button"
+                      onClick={() => { setAuthMode("register"); setAuthError(""); }}
+                      className="text-blue-400 hover:text-blue-300 font-semibold cursor-pointer"
+                    >
+                      Register Now
+                    </button>
+                  </p>
+                </div>
+              </form>
+            ) : (
+              <form onSubmit={handleEmailRegister} className="space-y-5">
+                <div>
+                  <h3 className="text-xl font-bold text-white text-center">Create Account</h3>
+                  <p className="text-xs text-slate-400 text-center mt-1">Register for EFF Fleet Maintenance access</p>
+                </div>
+
+                {authError && (
+                  <div className="p-3 bg-rose-500/10 border border-rose-500/20 rounded-xl text-rose-400 text-xs flex gap-2">
+                    <span className="font-bold">⚠️</span>
+                    <span>{authError}</span>
+                  </div>
+                )}
+
+                <div className="space-y-4">
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-300 uppercase tracking-wider mb-1.5">Full Name</label>
+                    <input
+                      type="text"
+                      required
+                      placeholder="e.g. John Banda"
+                      value={authName}
+                      onChange={(e) => setAuthName(e.target.value)}
+                      className="w-full px-4 py-3 bg-slate-900 border border-slate-700 rounded-xl text-sm text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500/40 focus:border-blue-500 transition-all"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-300 uppercase tracking-wider mb-1.5">Email Address</label>
+                    <input
+                      type="email"
+                      required
+                      placeholder="name@effzambia.org"
+                      value={authEmail}
+                      onChange={(e) => setAuthEmail(e.target.value)}
+                      className="w-full px-4 py-3 bg-slate-900 border border-slate-700 rounded-xl text-sm text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500/40 focus:border-blue-500 transition-all"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-300 uppercase tracking-wider mb-1.5">Phone Number</label>
+                    <input
+                      type="tel"
+                      required
+                      placeholder="e.g. +260 97 1234567"
+                      value={authPhone}
+                      onChange={(e) => setAuthPhone(e.target.value)}
+                      className="w-full px-4 py-3 bg-slate-900 border border-slate-700 rounded-xl text-sm text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500/40 focus:border-blue-500 transition-all"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-300 uppercase tracking-wider mb-1.5">Password</label>
+                    <input
+                      type="password"
+                      required
+                      minLength={6}
+                      placeholder="Min 6 characters"
+                      value={authPassword}
+                      onChange={(e) => setAuthPassword(e.target.value)}
+                      className="w-full px-4 py-3 bg-slate-900 border border-slate-700 rounded-xl text-sm text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500/40 focus:border-blue-500 transition-all"
+                    />
+                  </div>
+                </div>
+
+                <button
+                  type="submit"
+                  disabled={authLoading}
+                  className="w-full flex justify-center items-center gap-2 px-4 py-3 border border-transparent rounded-xl shadow-sm text-sm font-semibold text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 transition-all cursor-pointer disabled:opacity-50"
+                >
+                  {authLoading ? (
+                    <>
+                      <RefreshCw className="w-4 h-4 animate-spin" />
+                      Registering Account...
+                    </>
+                  ) : (
+                    "Register & Sign Up"
+                  )}
+                </button>
+
+                <div className="text-center pt-2">
+                  <p className="text-xs text-slate-400">
+                    Already have an account?{" "}
+                    <button
+                      type="button"
+                      onClick={() => { setAuthMode("signin"); setAuthError(""); }}
+                      className="text-blue-400 hover:text-blue-300 font-semibold cursor-pointer"
+                    >
+                      Sign In Here
+                    </button>
+                  </p>
+                </div>
+              </form>
+            )}
+
+            <div className="mt-6 pt-4 border-t border-slate-700/50 text-center">
+              <button
+                type="button"
+                onClick={() => setAgreementModalOpen(true)}
+                id="btn-agreement-terms-login"
+                className="inline-flex items-center gap-2 text-xs text-slate-400 hover:text-white transition-colors cursor-pointer"
+              >
+                <Shield className="w-3.5 h-3.5 text-blue-400 animate-pulse-subtle" />
+                Software Agreement & Terms
+              </button>
             </div>
           </div>
         </div>
@@ -1226,10 +1420,13 @@ export default function App() {
         <div className="p-4 border-t border-slate-800 bg-slate-950/40">
           <div className="flex items-center gap-3 mb-4 px-2">
             <div className="w-9 h-9 bg-slate-800 rounded-full flex items-center justify-center text-slate-300 font-semibold uppercase">
-              {user.displayName ? user.displayName[0] : user.email?.[0]}
+              {user.displayName ? user.displayName[0] : (dbUser?.name ? dbUser.name[0] : user.email?.[0])}
             </div>
             <div className="truncate flex-1 min-w-0">
-              <p className="text-xs font-semibold text-white truncate">{user.displayName || "Admin User"}</p>
+              <p className="text-xs font-semibold text-white truncate">{user.displayName || dbUser?.name || "Admin User"}</p>
+              {dbUser?.phoneNumber && (
+                <p className="text-[10px] text-slate-400 truncate mb-1" title={dbUser.phoneNumber}>📞 {dbUser.phoneNumber}</p>
+              )}
               <div className="flex items-center gap-1.5 mt-0.5">
                 <span className={`text-[9px] px-1.5 py-0.2 rounded font-extrabold uppercase tracking-wider ${isUserAdmin ? "bg-blue-500/20 text-blue-400 border border-blue-500/10" : "bg-slate-800 text-slate-300 border border-slate-700"}`}>
                   {isUserAdmin ? "Admin" : "Officer"}
@@ -2131,6 +2328,7 @@ export default function App() {
                         <tr>
                           <th className="px-6 py-4">User</th>
                           <th className="px-6 py-4">Email</th>
+                          <th className="px-6 py-4">Phone Number</th>
                           <th className="px-6 py-4">Role Permission</th>
                           <th className="px-6 py-4 text-center">Actions</th>
                         </tr>
@@ -2143,6 +2341,9 @@ export default function App() {
                             </td>
                             <td className="px-6 py-4 whitespace-nowrap text-xs font-medium text-slate-600">
                               {u.email}
+                            </td>
+                            <td className="px-6 py-4 whitespace-nowrap text-xs text-slate-600">
+                              {u.phoneNumber || <span className="text-slate-400 italic">Not set</span>}
                             </td>
                             <td className="px-6 py-4 whitespace-nowrap">
                               <span className={`inline-flex items-center gap-1 text-[10px] font-extrabold px-2.5 py-0.5 rounded-full ${u.role === "admin" ? "bg-blue-100 text-blue-700 border border-blue-200" : "bg-slate-100 text-slate-600 border border-slate-200"}`}>
@@ -2696,7 +2897,7 @@ export default function App() {
                   className="w-full px-4 py-2.5 rounded-xl border border-slate-200 text-sm focus:ring-2 focus:ring-blue-500 outline-none text-slate-900 disabled:bg-slate-50 disabled:text-slate-500"
                 />
                 {!editingUser && (
-                  <p className="text-[10px] text-slate-400 mt-1">Pre-registers the user. When they log in with this Google email, they will automatically be assigned this role.</p>
+                  <p className="text-[10px] text-slate-400 mt-1">Pre-registers the user. When they register with this email, they will automatically be assigned this role.</p>
                 )}
               </div>
 
@@ -2709,6 +2910,19 @@ export default function App() {
                   placeholder="e.g. John Doe"
                   value={userForm.name}
                   onChange={(e) => setUserForm(prev => ({ ...prev, name: e.target.value }))}
+                  className="w-full px-4 py-2.5 rounded-xl border border-slate-200 text-sm focus:ring-2 focus:ring-blue-500 outline-none text-slate-900"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-1.5">
+                  Phone Number (Optional)
+                </label>
+                <input
+                  type="text"
+                  placeholder="e.g. +260 97 1234567"
+                  value={userForm.phoneNumber}
+                  onChange={(e) => setUserForm(prev => ({ ...prev, phoneNumber: e.target.value }))}
                   className="w-full px-4 py-2.5 rounded-xl border border-slate-200 text-sm focus:ring-2 focus:ring-blue-500 outline-none text-slate-900"
                 />
               </div>

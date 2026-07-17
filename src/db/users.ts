@@ -2,7 +2,7 @@ import { db } from './index.ts';
 import { users } from './schema.ts';
 import { eq } from 'drizzle-orm';
 
-export async function getOrCreateUser(uid: string, email: string, name?: string) {
+export async function getOrCreateUser(uid: string, email: string, name?: string, phoneNumber?: string) {
   const lowerEmail = email.trim().toLowerCase();
   
   // 1. Check if user already exists by UID
@@ -11,13 +11,22 @@ export async function getOrCreateUser(uid: string, email: string, name?: string)
     const isAdminEmail = lowerEmail === "harrisonnjobvu@gmail.com" || lowerEmail === "harrisonnjobvu@gamil.com";
     if (isAdminEmail && existingUid[0].role !== "admin") {
       const updated = await db.update(users)
-        .set({ role: "admin", email: lowerEmail, name: name || existingUid[0].name })
+        .set({ 
+          role: "admin", 
+          email: lowerEmail, 
+          name: name || existingUid[0].name,
+          phoneNumber: phoneNumber || existingUid[0].phoneNumber 
+        })
         .where(eq(users.id, existingUid[0].id))
         .returning();
       return updated[0];
     }
     const updated = await db.update(users)
-      .set({ email: lowerEmail, name: name || existingUid[0].name })
+      .set({ 
+        email: lowerEmail, 
+        name: name || existingUid[0].name,
+        phoneNumber: phoneNumber || existingUid[0].phoneNumber 
+      })
       .where(eq(users.id, existingUid[0].id))
       .returning();
     return updated[0];
@@ -27,7 +36,11 @@ export async function getOrCreateUser(uid: string, email: string, name?: string)
   const existingEmail = await db.select().from(users).where(eq(users.email, lowerEmail));
   if (existingEmail.length > 0) {
     const updated = await db.update(users)
-      .set({ uid, name: name || existingEmail[0].name })
+      .set({ 
+        uid, 
+        name: name || existingEmail[0].name,
+        phoneNumber: phoneNumber || existingEmail[0].phoneNumber 
+      })
       .where(eq(users.id, existingEmail[0].id))
       .returning();
     return updated[0];
@@ -42,6 +55,7 @@ export async function getOrCreateUser(uid: string, email: string, name?: string)
       uid,
       email: lowerEmail,
       name: name || null,
+      phoneNumber: phoneNumber || null,
       role: defaultRole,
     })
     .returning();
