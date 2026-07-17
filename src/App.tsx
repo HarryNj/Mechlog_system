@@ -348,30 +348,26 @@ export default function App() {
   useEffect(() => {
     const restoreSession = async () => {
       try {
-        const stored = localStorage.getItem("eff_user_session");
-        if (stored) {
-          const session = JSON.parse(stored);
-          const customUser = {
-            uid: session.uid,
-            email: session.email,
-            displayName: session.name,
-            name: session.name,
-            phoneNumber: session.phoneNumber,
-            token: session.token,
-            getIdToken: async () => session.token
-          };
-          setUser(customUser as any);
-          
-          const partialDbUser = {
-            uid: session.uid,
-            email: session.email,
-            name: session.name,
-            role: session.role,
-            phoneNumber: session.phoneNumber
-          };
-          setDbUser(partialDbUser as any);
-          await fetchData(customUser as any, partialDbUser as any);
-        }
+        const dummyAdminUser = {
+          uid: "admin-bypass",
+          email: "admin@eff.zambia",
+          displayName: "Admin User",
+          name: "Admin User",
+          phoneNumber: "+260123456789",
+          token: "dummy-admin-token",
+          getIdToken: async () => "dummy-admin-token"
+        };
+        const dummyDbUser = {
+          id: 1,
+          uid: "admin-bypass",
+          email: "admin@eff.zambia",
+          name: "Admin User",
+          role: "admin",
+          phoneNumber: "+260123456789"
+        };
+        setUser(dummyAdminUser as any);
+        setDbUser(dummyDbUser as any);
+        await fetchData(dummyAdminUser as any, dummyDbUser as any);
       } catch (e) {
         console.error("Error setting session:", e);
       } finally {
@@ -1549,14 +1545,6 @@ export default function App() {
               </div>
             </div>
           </div>
-          <button
-            onClick={handleSignOut}
-            id="btn-sign-out"
-            className="w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl text-xs font-semibold bg-rose-600/10 hover:bg-rose-600 text-rose-500 hover:text-white transition-all cursor-pointer"
-          >
-            <LogOut className="w-4 h-4" />
-            Sign Out
-          </button>
         </div>
       </aside>
 
@@ -2454,20 +2442,18 @@ export default function App() {
                         )}
                       </div>
 
-                      {/* Chat Input Area (For FEOs) */}
-                      {!isUserAdmin && (
-                        <div className="p-4 bg-white border-t border-slate-200">
-                          <button
-                            onClick={openRequestModal}
-                            className="w-full bg-slate-50 hover:bg-slate-100 border border-slate-200 text-slate-600 px-4 py-3 rounded-xl text-sm font-medium transition-all cursor-pointer flex items-center justify-between"
-                          >
-                            <span>Type a new service request...</span>
-                            <div className="bg-blue-600 text-white p-1.5 rounded-lg">
-                              <Plus className="w-4 h-4" />
-                            </div>
-                          </button>
-                        </div>
-                      )}
+                      {/* Chat Input Area */}
+                      <div className="p-4 bg-white border-t border-slate-200">
+                        <button
+                          onClick={openRequestModal}
+                          className="w-full bg-slate-50 hover:bg-slate-100 border border-slate-200 text-slate-600 px-4 py-3 rounded-xl text-sm font-medium transition-all cursor-pointer flex items-center justify-between"
+                        >
+                          <span>Type a new service request...</span>
+                          <div className="bg-blue-600 text-white p-1.5 rounded-lg">
+                            <Plus className="w-4 h-4" />
+                          </div>
+                        </button>
+                      </div>
                     </div>
                   );
                 })()}
