@@ -25,7 +25,10 @@ import {
   FileSpreadsheet,
   Mail,
   Users,
-  Wrench
+  Wrench,
+  Lock,
+  Phone,
+  ArrowRight
 } from "lucide-react";
 import * as XLSX from "xlsx";
 import { auth, googleAuthProvider } from "./lib/firebase.ts";
@@ -278,26 +281,8 @@ function AgreementModal({ isOpen, onClose }: { isOpen: boolean; onClose: () => v
 const isIframe = typeof window !== "undefined" && window.self !== window.top;
 
 export default function App() {
-  const dummyAdminUser = {
-    uid: "admin-bypass",
-    email: "admin@effzambia.org",
-    displayName: "Admin User",
-    name: "Admin User",
-    phoneNumber: "+260123456789",
-    token: "dummy-admin-token",
-    getIdToken: async () => "dummy-admin-token"
-  };
-  const dummyDbUser = {
-    id: 1,
-    uid: "admin-bypass",
-    email: "admin@effzambia.org",
-    name: "Admin User",
-    role: "admin",
-    phoneNumber: "+260123456789"
-  };
-
-  const [user, setUser] = useState<FirebaseUser | null>(dummyAdminUser as any);
-  const [dbUser, setDbUser] = useState<UserDBType | null>(dummyDbUser as any);
+  const [user, setUser] = useState<FirebaseUser | null>(null);
+  const [dbUser, setDbUser] = useState<UserDBType | null>(null);
   const [authMode, setAuthMode] = useState<"signin" | "register" | "forgot">("signin");
   const [authEmail, setAuthEmail] = useState("");
   const [authPassword, setAuthPassword] = useState("");
@@ -447,9 +432,24 @@ export default function App() {
   useEffect(() => {
     const restoreSession = async () => {
       try {
-        await fetchData(dummyAdminUser as any, dummyDbUser as any);
-      } catch (e) {
-        console.error("Error setting session:", e);
+        const stored = localStorage.getItem("eff_user_session");
+        if (stored) {
+          const sessionUser = JSON.parse(stored);
+          const customUser = {
+            uid: sessionUser.uid,
+            email: sessionUser.email,
+            displayName: sessionUser.name,
+            name: sessionUser.name,
+            phoneNumber: sessionUser.phoneNumber,
+            token: sessionUser.token,
+            getIdToken: async () => sessionUser.token
+          };
+          setUser(customUser as any);
+          setDbUser(sessionUser);
+          await fetchData(customUser as any, sessionUser);
+        }
+      } catch (err) {
+        console.error("Failed to restore session:", err);
       } finally {
         setLoading(false);
       }
@@ -1347,9 +1347,160 @@ export default function App() {
     );
   }
 
-  const isUserAdmin = true;
-  const isAdminEmail = true;
-  const lowerEmail = "admin@effzambia.org";
+  if (!user) {
+    return (
+      <div className="min-h-screen bg-[#0a0f1d] flex items-center justify-center p-4 selection:bg-blue-500/30 font-sans">
+        <div className="w-full max-w-md animate-in fade-in zoom-in duration-300">
+          <div className="text-center mb-8">
+            <div className="inline-flex p-4 bg-white rounded-3xl mb-4 shadow-[0_0_30px_rgba(255,255,255,0.1)] border border-slate-800">
+              <img src={effLogo} alt="EFF Logo" className="w-16 h-16 object-contain" referrerPolicy="no-referrer" />
+            </div>
+            <h1 className="text-3xl font-black text-white tracking-tighter uppercase italic text-center">
+              EFF <span className="text-blue-500">Fleet</span>
+            </h1>
+            <p className="text-slate-500 text-xs font-bold uppercase tracking-[0.2em] mt-2 text-center">
+              Mechanic Spare Log System
+            </p>
+          </div>
+
+          <div className="bg-[#0d1425] p-8 rounded-[2rem] border border-blue-500/10 shadow-[0_20px_50px_rgba(0,0,0,0.3)] backdrop-blur-xl relative overflow-hidden group">
+            <div className="absolute -top-24 -right-24 w-48 h-48 bg-blue-600/10 blur-[80px] rounded-full group-hover:bg-blue-600/20 transition-all duration-700" />
+            <div className="absolute -bottom-24 -left-24 w-48 h-48 bg-emerald-600/10 blur-[80px] rounded-full group-hover:bg-emerald-600/20 transition-all duration-700" />
+
+            <div className="relative z-10">
+              <div className="flex bg-[#0a0f1d] p-1.5 rounded-2xl mb-8 border border-blue-500/10">
+                <button
+                  onClick={() => { setAuthMode("signin"); setAuthError(""); }}
+                  className={`flex-1 py-3 text-[10px] font-black uppercase tracking-widest rounded-xl transition-all duration-300 ${authMode === "signin" ? "bg-blue-600 text-white shadow-[0_0_20px_rgba(37,99,235,0.4)]" : "text-slate-500 hover:text-slate-300"}`}
+                >
+                  Auth Login
+                </button>
+                <button
+                  onClick={() => { setAuthMode("register"); setAuthError(""); }}
+                  className={`flex-1 py-3 text-[10px] font-black uppercase tracking-widest rounded-xl transition-all duration-300 ${authMode === "register" ? "bg-blue-600 text-white shadow-[0_0_20px_rgba(37,99,235,0.4)]" : "text-slate-500 hover:text-slate-300"}`}
+                >
+                  New Registry
+                </button>
+              </div>
+
+              {authError && (
+                <div className="mb-6 p-4 bg-rose-500/10 border border-rose-500/20 rounded-2xl flex items-center gap-3 animate-in slide-in-from-top-2 duration-300">
+                  <AlertCircle className="w-5 h-5 text-rose-500 flex-shrink-0" />
+                  <p className="text-xs font-bold text-rose-200 leading-relaxed">{authError}</p>
+                </div>
+              )}
+
+              {authSuccess && (
+                <div className="mb-6 p-4 bg-emerald-500/10 border border-emerald-500/20 rounded-2xl flex items-center gap-3 animate-in slide-in-from-top-2 duration-300">
+                  <CheckCircle className="w-5 h-5 text-emerald-500 flex-shrink-0" />
+                  <p className="text-xs font-bold text-emerald-200 leading-relaxed">{authSuccess}</p>
+                </div>
+              )}
+
+              <form onSubmit={authMode === "signin" ? handleEmailSignIn : authMode === "register" ? handleEmailRegister : handleForgotPassword} className="space-y-5">
+                {authMode === "register" && (
+                  <div className="space-y-4">
+                    <div className="group relative">
+                      <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none">
+                        <User className="h-4 w-4 text-slate-500 group-focus-within:text-blue-500 transition-colors" />
+                      </div>
+                      <input
+                        type="text"
+                        placeholder="FULL LEGAL NAME"
+                        value={authName}
+                        onChange={(e) => setAuthName(e.target.value)}
+                        className="block w-full pl-11 pr-4 py-4 bg-[#0a0f1d] border border-blue-500/10 rounded-2xl text-xs font-black text-white placeholder-slate-600 focus:outline-none focus:ring-2 focus:ring-blue-500/50 focus:border-blue-500 transition-all uppercase tracking-widest"
+                      />
+                    </div>
+                    <div className="group relative">
+                      <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none">
+                        <Phone className="h-4 w-4 text-slate-500 group-focus-within:text-blue-500 transition-colors" />
+                      </div>
+                      <input
+                        type="tel"
+                        placeholder="PHONE NUMBER (+260...)"
+                        value={authPhone}
+                        onChange={(e) => setAuthPhone(e.target.value)}
+                        className="block w-full pl-11 pr-4 py-4 bg-[#0a0f1d] border border-blue-500/10 rounded-2xl text-xs font-black text-white placeholder-slate-600 focus:outline-none focus:ring-2 focus:ring-blue-500/50 focus:border-blue-500 transition-all tracking-widest"
+                      />
+                    </div>
+                  </div>
+                )}
+
+                <div className="group relative">
+                  <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none">
+                    <Mail className="h-4 w-4 text-slate-500 group-focus-within:text-blue-500 transition-colors" />
+                  </div>
+                  <input
+                    type="email"
+                    placeholder="EMAIL ADDRESS"
+                    value={authEmail}
+                    onChange={(e) => setAuthEmail(e.target.value)}
+                    className="block w-full pl-11 pr-4 py-4 bg-[#0a0f1d] border border-blue-500/10 rounded-2xl text-xs font-black text-white placeholder-slate-600 focus:outline-none focus:ring-2 focus:ring-blue-500/50 focus:border-blue-500 transition-all uppercase tracking-widest"
+                  />
+                </div>
+
+                <div className="group relative">
+                  <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none">
+                    <Lock className="h-4 w-4 text-slate-500 group-focus-within:text-blue-500 transition-colors" />
+                  </div>
+                  <input
+                    type="password"
+                    placeholder="PASSWORD"
+                    value={authPassword}
+                    onChange={(e) => setAuthPassword(e.target.value)}
+                    className="block w-full pl-11 pr-4 py-4 bg-[#0a0f1d] border border-blue-500/10 rounded-2xl text-xs font-black text-white placeholder-slate-600 focus:outline-none focus:ring-2 focus:ring-blue-500/50 focus:border-blue-500 transition-all tracking-widest"
+                  />
+                </div>
+
+                <button
+                  type="submit"
+                  disabled={authLoading}
+                  className="w-full py-4 bg-blue-600 hover:bg-blue-500 disabled:bg-slate-800 disabled:text-slate-500 text-white rounded-2xl text-xs font-black uppercase tracking-[0.2em] shadow-[0_15px_30px_rgba(37,99,235,0.3)] hover:shadow-[0_15px_40px_rgba(37,99,235,0.5)] transition-all duration-300 disabled:shadow-none flex items-center justify-center gap-2 group cursor-pointer border border-blue-400/30"
+                >
+                  {authLoading ? (
+                    <>
+                      <RefreshCw className="w-4 h-4 animate-spin" />
+                      Decrypting...
+                    </>
+                  ) : (
+                    <>
+                      {authMode === "signin" ? "Initialize Session" : authMode === "register" ? "Create Account" : "Reset Data"}
+                      <ArrowRight className="w-4 h-4 group-hover:translate-x-1 transition-transform" />
+                    </>
+                  )}
+                </button>
+              </form>
+
+              {authMode === "signin" && (
+                <div className="mt-6 text-center">
+                  <button
+                    onClick={() => setAuthMode("forgot")}
+                    className="text-[10px] font-black text-slate-600 hover:text-blue-500 uppercase tracking-widest transition-colors cursor-pointer"
+                  >
+                    Forgot access credentials?
+                  </button>
+                </div>
+              )}
+            </div>
+          </div>
+
+          <div className="mt-8 text-center space-y-4">
+            <p className="text-[9px] font-black text-slate-600 uppercase tracking-[0.3em] text-center">
+              Security Matrix v2.0 // Federated System
+            </p>
+            <div className="flex items-center justify-center gap-6 opacity-30 grayscale hover:grayscale-0 hover:opacity-100 transition-all duration-500">
+              <img src="https://upload.wikimedia.org/wikipedia/commons/thumb/0/06/Flag_of_Zambia.svg/2000px-Flag_of_Zambia.svg.png" alt="Zambia" className="h-4 rounded-sm" referrerPolicy="no-referrer" />
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  const isUserAdmin = dbUser?.role === "admin";
+  const isAdminEmail = dbUser?.email === "admin@effzambia.org" || dbUser?.email === "harrisonnjobvu@gmail.com";
+  const lowerEmail = dbUser?.email?.toLowerCase() || "";
 
   return (
     <div className="min-h-screen bg-[#0a0f1d] flex flex-col md:flex-row text-slate-200 selection:bg-blue-500/30">
@@ -1453,7 +1604,7 @@ export default function App() {
 
         {/* User Account Info */}
         <div className="p-4 border-t border-slate-800 bg-slate-950/40">
-          <div className="flex items-center gap-3 px-2">
+          <div className="flex items-center gap-3 px-2 mb-4">
             <div className="w-9 h-9 bg-slate-800 rounded-full flex items-center justify-center text-slate-300 font-semibold uppercase">
               {user?.displayName ? user.displayName[0] : (dbUser?.name ? dbUser.name[0] : (user?.email?.[0] || "A"))}
             </div>
@@ -1470,6 +1621,14 @@ export default function App() {
               </div>
             </div>
           </div>
+
+          <button
+            onClick={handleSignOut}
+            className="w-full flex items-center justify-center gap-2 py-2.5 bg-rose-600/10 hover:bg-rose-600 text-rose-500 hover:text-white rounded-xl text-[10px] font-black uppercase tracking-widest transition-all duration-300 cursor-pointer border border-rose-500/20"
+          >
+            <LogOut className="w-3.5 h-3.5" />
+            Sign Out Session
+          </button>
         </div>
       </aside>
 

@@ -164,25 +164,6 @@ async function ensureDatabaseSchema() {
     }
 
     console.log("Database schema check completed. Self-healing active & database is ready!");
-
-    // Seed dummy admin user for bypass
-    try {
-      const dummyUid = "admin-bypass";
-      const existing = await db.select().from(users).where(eq(users.uid, dummyUid));
-      if (existing.length === 0) {
-        console.log("Seeding dummy admin user...");
-        await db.insert(users).values({
-          uid: dummyUid,
-          email: "admin@effzambia.org",
-          name: "Admin User",
-          phoneNumber: "+260123456789",
-          role: "admin"
-        });
-        console.log("Dummy admin user seeded.");
-      }
-    } catch (seedErr: any) {
-      console.error("Failed to seed dummy admin user:", seedErr);
-    }
   } catch (err: any) {
     console.error("Critical error in database self-healing schema setup:", err);
   }

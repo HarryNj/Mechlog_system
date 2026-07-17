@@ -45,17 +45,6 @@ export const requireAuth = async (
 
   const token = authHeader.split('Bearer ')[1];
   
-  if (token === "dummy-admin-token") {
-    req.user = {
-      uid: "admin-bypass",
-      email: "admin@effzambia.org",
-      name: "Admin User",
-      role: "admin",
-      phone_number: "+260123456789"
-    };
-    return next();
-  }
-
   // Check custom cryptographic token
   if (token.includes('.')) {
     const payload = verifyCustomToken(token);
