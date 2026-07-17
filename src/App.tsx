@@ -32,6 +32,39 @@ import { signInWithPopup, signOut, onAuthStateChanged, User as FirebaseUser } fr
 // @ts-ignore
 import effLogo from "./assets/images/eff_logo_1784229618019.jpg";
 
+// Intercept native fetch to inject VITE_API_BASE_URL if configured (e.g., for Cloudflare Pages support)
+const originalFetch = window.fetch;
+const fetch = async function (input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
+  const API_BASE_URL = (import.meta as any).env.VITE_API_BASE_URL || "";
+  let url = input;
+  if (API_BASE_URL && typeof input === "string" && input.startsWith("/api/")) {
+    const base = API_BASE_URL.endsWith("/") ? API_BASE_URL.slice(0, -1) : API_BASE_URL;
+    url = `${base}${input}`;
+  }
+  
+  const response = await originalFetch(url, init);
+  
+  // Guard against static page fallbacks returning HTML index pages when API requests fail
+  if (typeof input === "string" && input.startsWith("/api/")) {
+    const contentType = response.headers.get("content-type") || "";
+    if (contentType.includes("text/html")) {
+      const errMsg = `API request to '${input}' returned HTML instead of JSON.\n\n` +
+        `This typically occurs when hosting your frontend on a static CDN (such as Cloudflare Pages) without configuring VITE_API_BASE_URL.\n\n` +
+        `Please configure the VITE_API_BASE_URL environment variable in your Cloudflare Pages dashboard to point to your live Google Cloud Run server: https://ais-dev-nirmkj3yoeyfseq4icue22-23626597169.europe-west2.run.app`;
+      
+      return new Response(JSON.stringify({
+        error: "Invalid API Response",
+        details: errMsg
+      }), {
+        status: 500,
+        headers: { "Content-Type": "application/json" }
+      });
+    }
+  }
+  
+  return response;
+};
+
 // Zambia Provinces and Districts data
 const ZAMBIA_PROVINCES: { [key: string]: string[] } = {
   "Central": ["Chibombo", "Chisamba", "Chitambo", "Kabwe", "Kapiri Mposhi", "Luano", "Mkushi", "Mumbwa", "Ngabwe", "Serenje", "Shibuyunji"],
@@ -212,6 +245,8 @@ function AgreementModal({ isOpen, onClose }: { isOpen: boolean; onClose: () => v
   );
 }
 
+const isIframe = typeof window !== "undefined" && window.self !== window.top;
+
 export default function App() {
   const [user, setUser] = useState<FirebaseUser | null>(null);
   const [loading, setLoading] = useState(true);
@@ -341,6 +376,17 @@ export default function App() {
 
       const results = await Promise.all(fetchPromises);
       
+      // Check for any failures and handle gracefully
+      const failedResult = results.find(r => !r.ok);
+      if (failedResult) {
+        try {
+          const errData = await failedResult.clone().json();
+          if (errData && errData.error === "Invalid API Response") {
+            alert(errData.details);
+          }
+        } catch (_) {}
+      }
+      
       if (results[0].ok) setBikesList(await results[0].json());
       if (results[1].ok) setSparesList(await results[1].json());
       if (results[2].ok) setLogsList(await results[2].json());
@@ -360,9 +406,18 @@ export default function App() {
     try {
       setLoading(true);
       await signInWithPopup(auth, googleAuthProvider);
-    } catch (err) {
+    } catch (err: any) {
       console.error("Sign-in failed:", err);
       setLoading(false);
+      let errorMsg = "Sign-in failed. This is usually caused by browser security settings, blocking third-party cookies, or running inside a preview iframe.";
+      if (err?.code === "auth/popup-blocked") {
+        errorMsg = "The sign-in popup was blocked by your browser. Please allow popups for this site and try again.";
+      } else if (err?.code === "auth/cancelled-popup-request") {
+        errorMsg = "The sign-in popup was closed before completing authentication. Please try again.";
+      } else if (err?.code === "auth/network-request-failed") {
+        errorMsg = "Network error. Please check your internet connection.";
+      }
+      alert(`${errorMsg}\n\nTIP: If you are using the AI Studio preview, please open the app in a new tab by clicking 'Open in New Tab' at the top-right of your screen, or use the direct link below.`);
     }
   };
 
@@ -1023,6 +1078,28 @@ export default function App() {
                 </svg>
                 Sign in with Google
               </button>
+
+              {isIframe && (
+                <div className="mt-4 p-4 rounded-xl bg-amber-500/10 border border-amber-500/30 text-left">
+                  <div className="flex gap-2.5">
+                    <span className="text-amber-400 font-bold text-sm mt-0.5">⚠️</span>
+                    <div>
+                      <h4 className="text-xs font-bold text-amber-400 uppercase tracking-wide">Preview Mode Restriction</h4>
+                      <p className="text-slate-300 text-xs mt-1 leading-relaxed">
+                        Google Sign-In might be blocked by your browser's third-party cookie restrictions because this app is currently inside an iframe.
+                      </p>
+                      <a
+                        href={typeof window !== "undefined" ? window.location.href : "#"}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="inline-flex items-center gap-1.5 mt-2.5 px-3 py-1.5 rounded-lg bg-amber-500 hover:bg-amber-600 text-slate-950 text-xs font-bold transition-all cursor-pointer shadow-sm hover:scale-[1.02] active:scale-[0.98]"
+                      >
+                        Open App in New Tab to Sign In
+                      </a>
+                    </div>
+                  </div>
+                </div>
+              )}
 
               <div className="pt-4 border-t border-slate-700/50 text-center">
                 <button
