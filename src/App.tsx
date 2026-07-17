@@ -438,8 +438,8 @@ export default function App() {
       let errorMsg = "Google Sign-In failed. This is usually caused by browser security settings, blocking third-party cookies, or running inside a preview iframe.";
       if (err?.code === "auth/popup-blocked") {
         errorMsg = "The sign-in popup was blocked by your browser. Please allow popups for this site and try again.";
-      } else if (err?.code === "auth/cancelled-popup-request") {
-        errorMsg = "The sign-in popup was closed before completing authentication. Please try again.";
+      } else if (err?.code === "auth/cancelled-popup-request" || err?.code === "auth/popup-closed-by-user") {
+        errorMsg = "The Google Sign-In popup was closed before completing authentication. Please try again and keep the popup open until you select your Google account.";
       } else if (err?.code === "auth/network-request-failed") {
         errorMsg = "Network error. Please check your internet connection.";
       }
@@ -1239,6 +1239,14 @@ export default function App() {
                   <p className="text-xs text-slate-400 text-center mt-1">Access your fleet maintenance dashboard</p>
                 </div>
 
+                <div className="p-3 bg-blue-500/10 border border-blue-500/20 rounded-xl text-blue-300 text-xs flex gap-2">
+                  <span className="font-bold">💡</span>
+                  <div>
+                    <span className="font-semibold block">Sandbox project notice:</span>
+                    <span>To avoid permission restrictions on this sandboxed Firebase project, please use the **Google Sign-In** button above, which is pre-authorized and works instantly!</span>
+                  </div>
+                </div>
+
                 {authError && (
                   <div className="p-3 bg-rose-500/10 border border-rose-500/20 rounded-xl text-rose-400 text-xs flex gap-2">
                     <span className="font-bold">⚠️</span>
@@ -1323,6 +1331,14 @@ export default function App() {
                 <div>
                   <h3 className="text-xl font-bold text-white text-center">Create Account</h3>
                   <p className="text-xs text-slate-400 text-center mt-1">Register for EFF Fleet Maintenance access</p>
+                </div>
+
+                <div className="p-3 bg-blue-500/10 border border-blue-500/20 rounded-xl text-blue-300 text-xs flex gap-2">
+                  <span className="font-bold">💡</span>
+                  <div>
+                    <span className="font-semibold block">Sandbox project notice:</span>
+                    <span>To avoid permission restrictions on this sandboxed Firebase project, please use the **Google Sign-In** button above, which is pre-authorized and works instantly!</span>
+                  </div>
                 </div>
 
                 {authError && (
