@@ -28,7 +28,6 @@ import {
 } from "lucide-react";
 import * as XLSX from "xlsx";
 import { auth, googleAuthProvider } from "./lib/firebase.ts";
-import GoogleDriveSyncPanel from "./components/GoogleDriveSyncPanel.tsx";
 import { 
   signOut, 
   onAuthStateChanged, 
@@ -289,6 +288,7 @@ export default function App() {
   
   const [loading, setLoading] = useState(true);
   const [syncing, setSyncing] = useState(false);
+  const [lastSynced, setLastSynced] = useState<Date>(new Date());
   const [isOnline, setIsOnline] = useState(typeof navigator !== 'undefined' ? navigator.onLine : true);
   const [offlineQueue, setOfflineQueue] = useState<any[]>(() => {
     try { return JSON.parse(localStorage.getItem('eff_offline_queue') || '[]'); }
@@ -494,9 +494,9 @@ export default function App() {
   };
 
   // Fetch all database records
-  const fetchData = async (currentUser = user, syncedDbUser = dbUser) => {
+  const fetchData = async (currentUser = user, syncedDbUser = dbUser, isSilent = false) => {
     if (!currentUser) return;
-    setSyncing(true);
+    if (!isSilent) setSyncing(true);
     try {
       const token = await currentUser.getIdToken();
       const headers = { "Authorization": `Bearer ${token}` };
@@ -519,7 +519,7 @@ export default function App() {
       
       // Check for any failures and handle gracefully
       const failedResult = results.find(r => !r.ok);
-      if (failedResult) {
+      if (failedResult && !isSilent) {
         try {
           const errData = await failedResult.json();
           if (errData && errData.error === "Invalid API Response") {
@@ -555,12 +555,25 @@ export default function App() {
           saveToStorage("users", data);
         }
       }
+      setLastSynced(new Date());
     } catch (err) {
       console.error("Error fetching data:", err);
     } finally {
-      setSyncing(false);
+      if (!isSilent) setSyncing(false);
     }
   };
+
+  // Automated background polling to sync data dynamically across all devices
+  useEffect(() => {
+    if (!user) return;
+    const interval = setInterval(() => {
+      if (document.visibilityState === "visible" && navigator.onLine) {
+        fetchData(user, dbUser, true);
+      }
+    }, 10000); // Sync silently every 10 seconds
+
+    return () => clearInterval(interval);
+  }, [user, dbUser]);
 
   // Handle Email/Password Sign-In (Custom Secure Relational DB Login)
   const handleEmailSignIn = async (e: React.FormEvent) => {
@@ -1666,10 +1679,26 @@ export default function App() {
           </div>
 
           <div className="flex items-center gap-3">
+            {/* Real-Time Live Sync Status Indicator */}
+            <div className="flex items-center gap-2.5 px-3 py-1.5 bg-slate-50 border border-slate-200/60 rounded-xl">
+              <span className="relative flex h-2 w-2">
+                <span className={`animate-ping absolute inline-flex h-full w-full rounded-full opacity-75 ${isOnline ? "bg-emerald-400" : "bg-amber-400"}`}></span>
+                <span className={`relative inline-flex rounded-full h-2 w-2 ${isOnline ? "bg-emerald-500" : "bg-amber-500"}`}></span>
+              </span>
+              <div className="flex flex-col text-left">
+                <span className="text-[10px] font-bold text-slate-700 leading-none">
+                  {isOnline ? "Live Cloud Active" : "Offline Cache"}
+                </span>
+                <span className="text-[8px] text-slate-400 font-semibold leading-none mt-0.5">
+                  {isOnline ? `Last synced: ${lastSynced.toLocaleTimeString()}` : "Saving locally"}
+                </span>
+              </div>
+            </div>
+
             {syncing && (
               <span className="flex items-center gap-1.5 text-xs text-blue-600 font-medium">
                 <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                Syncing...
+                Updating...
               </span>
             )}
             
@@ -2155,18 +2184,6 @@ export default function App() {
                     )}
                   </div>
                 </div>
-              </div>
-
-              {/* Google Drive Cloud Sync Panel */}
-              <div className="mt-6">
-                <GoogleDriveSyncPanel
-                  bikesList={bikesList}
-                  sparesList={sparesList}
-                  logsList={logsList}
-                  requestsList={requestsList}
-                  user={user}
-                  onRefreshData={fetchData}
-                />
               </div>
             </div>
           )}
