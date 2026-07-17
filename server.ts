@@ -29,12 +29,134 @@ function generateCustomToken(user: { uid: string; email: string; role: string; n
 
 import { db } from "./src/db/index.ts";
 import { users, bikes, sparesInventory, serviceLogs, serviceLogSpares, serviceRequests } from "./src/db/schema.ts";
-import { eq, desc } from "drizzle-orm";
+import { eq, desc, sql } from "drizzle-orm";
 import { requireAuth, AuthRequest } from "./src/middleware/auth.ts";
 import { getOrCreateUser } from "./src/db/users.ts";
 
 
+// Automatic self-healing database schema verification
+async function ensureDatabaseSchema() {
+  console.log("Starting automatic self-healing database schema check...");
+  try {
+    // 1. Create tables if they do not exist
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS users (
+        id SERIAL PRIMARY KEY,
+        uid TEXT NOT NULL UNIQUE,
+        email TEXT NOT NULL,
+        password_hash TEXT,
+        name TEXT,
+        phone_number TEXT,
+        role TEXT DEFAULT 'user' NOT NULL,
+        created_at TIMESTAMP DEFAULT NOW()
+      );
+    `);
+
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS bikes (
+        id SERIAL PRIMARY KEY,
+        reg_no TEXT NOT NULL UNIQUE,
+        province TEXT NOT NULL,
+        district TEXT NOT NULL,
+        model TEXT NOT NULL,
+        officer TEXT NOT NULL,
+        date_added TEXT NOT NULL DEFAULT '',
+        created_at TIMESTAMP DEFAULT NOW()
+      );
+    `);
+
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS spares_inventory (
+        id SERIAL PRIMARY KEY,
+        name TEXT NOT NULL UNIQUE,
+        quantity INTEGER NOT NULL,
+        date_added TEXT NOT NULL,
+        added_by TEXT NOT NULL,
+        created_at TIMESTAMP DEFAULT NOW()
+      );
+    `);
+
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS service_logs (
+        id SERIAL PRIMARY KEY,
+        bike_id INTEGER NOT NULL REFERENCES bikes(id) ON DELETE CASCADE,
+        date TEXT NOT NULL,
+        next_service_date TEXT,
+        next_service_mileage INTEGER,
+        mileage INTEGER NOT NULL,
+        officer TEXT NOT NULL,
+        province TEXT NOT NULL,
+        district TEXT NOT NULL,
+        work_done TEXT,
+        work_pending TEXT,
+        status TEXT NOT NULL,
+        created_at TIMESTAMP DEFAULT NOW()
+      );
+    `);
+
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS service_log_spares (
+        id SERIAL PRIMARY KEY,
+        service_log_id INTEGER NOT NULL REFERENCES service_logs(id) ON DELETE CASCADE,
+        spare_id INTEGER REFERENCES spares_inventory(id) ON DELETE SET NULL,
+        spare_name TEXT NOT NULL,
+        quantity INTEGER NOT NULL,
+        created_at TIMESTAMP DEFAULT NOW()
+      );
+    `);
+
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS service_requests (
+        id SERIAL PRIMARY KEY,
+        bike_id INTEGER NOT NULL REFERENCES bikes(id) ON DELETE CASCADE,
+        bike_reg TEXT NOT NULL,
+        requested_by TEXT NOT NULL,
+        service_type TEXT NOT NULL,
+        problem_description TEXT NOT NULL,
+        status TEXT DEFAULT 'pending' NOT NULL,
+        date_requested TEXT NOT NULL DEFAULT '',
+        created_at TIMESTAMP DEFAULT NOW()
+      );
+    `);
+
+    // 2. Self-heal/Migrate missing columns on existing tables
+    const columnsCheck = [
+      { table: "users", column: "password_hash", type: "TEXT" },
+      { table: "users", column: "phone_number", type: "TEXT" },
+      { table: "users", column: "role", type: "TEXT DEFAULT 'user' NOT NULL" },
+      { table: "bikes", column: "date_added", type: "TEXT NOT NULL DEFAULT ''" },
+      { table: "service_requests", column: "status", type: "TEXT DEFAULT 'pending' NOT NULL" },
+      { table: "service_requests", column: "date_requested", type: "TEXT NOT NULL DEFAULT ''" }
+    ];
+
+    for (const check of columnsCheck) {
+      const res = await db.execute(sql`
+        SELECT column_name 
+        FROM information_schema.columns 
+        WHERE table_name = ${check.table} AND column_name = ${check.column};
+      `);
+      if (res.rows.length === 0) {
+        console.log(`Self-healing: Adding column '${check.column}' to table '${check.table}'...`);
+        try {
+          await db.execute(sql.raw(`ALTER TABLE ${check.table} ADD COLUMN ${check.column} ${check.type};`));
+          console.log(`Self-healing: Column '${check.column}' added successfully.`);
+        } catch (alterErr: any) {
+          console.error(`Failed to add column '${check.column}':`, alterErr.message);
+        }
+      }
+    }
+
+    console.log("Database schema check completed. Self-healing active & database is ready!");
+  } catch (err: any) {
+    console.error("Critical error in database self-healing schema setup:", err);
+  }
+}
+
+
 async function startServer() {
+  // Ensure the DB schema is up-to-date and all columns/tables exist
+  await ensureDatabaseSchema();
+
   const app = express();
   const PORT = parseInt(process.env.PORT || "3000", 10);
 

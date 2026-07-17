@@ -432,6 +432,26 @@ export default function App() {
   useEffect(() => {
     const restoreSession = async () => {
       try {
+        // Attempt to restore persistent custom user session
+        const savedSessionStr = localStorage.getItem("eff_user_session");
+        if (savedSessionStr) {
+          const sessionUser = JSON.parse(savedSessionStr);
+          const customUser = {
+            uid: sessionUser.uid,
+            email: sessionUser.email,
+            displayName: sessionUser.name,
+            name: sessionUser.name,
+            phoneNumber: sessionUser.phoneNumber,
+            token: sessionUser.token,
+            getIdToken: async () => sessionUser.token
+          };
+          setUser(customUser as any);
+          setDbUser(sessionUser);
+          await fetchData(customUser as any, sessionUser);
+          return;
+        }
+
+        // Fallback to dummy admin user bypass if no session is stored
         const dummyAdminUser = {
           uid: "admin-bypass",
           email: "admin@eff.zambia",
