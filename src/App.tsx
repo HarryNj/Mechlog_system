@@ -34,7 +34,8 @@ import {
   User as FirebaseUser,
   createUserWithEmailAndPassword,
   signInWithEmailAndPassword,
-  updateProfile
+  updateProfile,
+  sendPasswordResetEmail
 } from "firebase/auth";
 // @ts-ignore
 import effLogo from "./assets/images/eff_logo_1784229618019.jpg";
@@ -257,12 +258,13 @@ const isIframe = typeof window !== "undefined" && window.self !== window.top;
 
 export default function App() {
   const [user, setUser] = useState<FirebaseUser | null>(null);
-  const [authMode, setAuthMode] = useState<"signin" | "register">("signin");
+  const [authMode, setAuthMode] = useState<"signin" | "register" | "forgot">("signin");
   const [authEmail, setAuthEmail] = useState("");
   const [authPassword, setAuthPassword] = useState("");
   const [authName, setAuthName] = useState("");
   const [authPhone, setAuthPhone] = useState("");
   const [authError, setAuthError] = useState("");
+  const [authSuccess, setAuthSuccess] = useState("");
   const [authLoading, setAuthLoading] = useState(false);
   
   const [loading, setLoading] = useState(true);
@@ -431,6 +433,7 @@ export default function App() {
     }
     setAuthLoading(true);
     setAuthError("");
+    setAuthSuccess("");
     try {
       await signInWithEmailAndPassword(auth, authEmail.trim(), authPassword);
       // After success, onAuthStateChanged handles the rest
@@ -443,6 +446,33 @@ export default function App() {
         errorMsg = "Invalid email address format.";
       } else if (err?.code === "auth/too-many-requests") {
         errorMsg = "Too many failed attempts. Access to this account has been temporarily disabled.";
+      }
+      setAuthError(errorMsg);
+    } finally {
+      setAuthLoading(false);
+    }
+  };
+
+  // Handle Password Reset Email
+  const handleForgotPassword = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!authEmail) {
+      setAuthError("Please enter your email address to receive a reset link.");
+      return;
+    }
+    setAuthLoading(true);
+    setAuthError("");
+    setAuthSuccess("");
+    try {
+      await sendPasswordResetEmail(auth, authEmail.trim());
+      setAuthSuccess("A password reset link has been sent to your email! Check your inbox.");
+    } catch (err: any) {
+      console.error("Password reset failed:", err);
+      let errorMsg = "Failed to send reset email. Please ensure your email is correct.";
+      if (err?.code === "auth/user-not-found") {
+        errorMsg = "No account found with this email address.";
+      } else if (err?.code === "auth/invalid-email") {
+        errorMsg = "Invalid email address format.";
       }
       setAuthError(errorMsg);
     } finally {
@@ -1145,6 +1175,13 @@ export default function App() {
                   </div>
                 )}
 
+                {authSuccess && (
+                  <div className="p-3 bg-emerald-500/10 border border-emerald-500/20 rounded-xl text-emerald-400 text-xs flex gap-2">
+                    <span className="font-bold">✓</span>
+                    <span>{authSuccess}</span>
+                  </div>
+                )}
+
                 <div className="space-y-4">
                   <div>
                     <label className="block text-xs font-semibold text-slate-300 uppercase tracking-wider mb-1.5">Email Address</label>
@@ -1161,7 +1198,16 @@ export default function App() {
                   </div>
 
                   <div>
-                    <label className="block text-xs font-semibold text-slate-300 uppercase tracking-wider mb-1.5">Password</label>
+                    <div className="flex justify-between items-center mb-1.5">
+                      <label className="block text-xs font-semibold text-slate-300 uppercase tracking-wider">Password</label>
+                      <button
+                        type="button"
+                        onClick={() => { setAuthMode("forgot"); setAuthError(""); setAuthSuccess(""); }}
+                        className="text-xs text-blue-400 hover:text-blue-300 transition-colors cursor-pointer"
+                      >
+                        Forgot password?
+                      </button>
+                    </div>
                     <input
                       type="password"
                       required
@@ -1193,7 +1239,7 @@ export default function App() {
                     Don't have an account?{" "}
                     <button
                       type="button"
-                      onClick={() => { setAuthMode("register"); setAuthError(""); }}
+                      onClick={() => { setAuthMode("register"); setAuthError(""); setAuthSuccess(""); }}
                       className="text-blue-400 hover:text-blue-300 font-semibold cursor-pointer"
                     >
                       Register Now
@@ -1201,7 +1247,7 @@ export default function App() {
                   </p>
                 </div>
               </form>
-            ) : (
+            ) : authMode === "register" ? (
               <form onSubmit={handleEmailRegister} className="space-y-5">
                 <div>
                   <h3 className="text-xl font-bold text-white text-center">Create Account</h3>
@@ -1286,10 +1332,72 @@ export default function App() {
                     Already have an account?{" "}
                     <button
                       type="button"
-                      onClick={() => { setAuthMode("signin"); setAuthError(""); }}
+                      onClick={() => { setAuthMode("signin"); setAuthError(""); setAuthSuccess(""); }}
                       className="text-blue-400 hover:text-blue-300 font-semibold cursor-pointer"
                     >
                       Sign In Here
+                    </button>
+                  </p>
+                </div>
+              </form>
+            ) : (
+              <form onSubmit={handleForgotPassword} className="space-y-5">
+                <div>
+                  <h3 className="text-xl font-bold text-white text-center">Reset Password</h3>
+                  <p className="text-xs text-slate-400 text-center mt-1">Enter your email address and we'll send you a secure link to reset your password.</p>
+                </div>
+
+                {authError && (
+                  <div className="p-3 bg-rose-500/10 border border-rose-500/20 rounded-xl text-rose-400 text-xs flex gap-2">
+                    <span className="font-bold">⚠️</span>
+                    <span>{authError}</span>
+                  </div>
+                )}
+
+                {authSuccess && (
+                  <div className="p-3 bg-emerald-500/10 border border-emerald-500/20 rounded-xl text-emerald-400 text-xs flex gap-2">
+                    <span className="font-bold">✓</span>
+                    <span>{authSuccess}</span>
+                  </div>
+                )}
+
+                <div className="space-y-4">
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-300 uppercase tracking-wider mb-1.5">Email Address</label>
+                    <input
+                      type="email"
+                      required
+                      placeholder="name@effzambia.org"
+                      value={authEmail}
+                      onChange={(e) => setAuthEmail(e.target.value)}
+                      className="w-full px-4 py-3 bg-slate-900 border border-slate-700 rounded-xl text-sm text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500/40 focus:border-blue-500 transition-all"
+                    />
+                  </div>
+                </div>
+
+                <button
+                  type="submit"
+                  disabled={authLoading}
+                  className="w-full flex justify-center items-center gap-2 px-4 py-3 border border-transparent rounded-xl shadow-sm text-sm font-semibold text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 transition-all cursor-pointer disabled:opacity-50"
+                >
+                  {authLoading ? (
+                    <>
+                      <RefreshCw className="w-4 h-4 animate-spin" />
+                      Sending Link...
+                    </>
+                  ) : (
+                    "Send Password Reset Link"
+                  )}
+                </button>
+
+                <div className="text-center pt-2">
+                  <p className="text-xs text-slate-400">
+                    <button
+                      type="button"
+                      onClick={() => { setAuthMode("signin"); setAuthError(""); setAuthSuccess(""); }}
+                      className="text-blue-400 hover:text-blue-300 font-semibold cursor-pointer"
+                    >
+                      ← Back to Sign In
                     </button>
                   </p>
                 </div>
