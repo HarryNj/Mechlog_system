@@ -46,7 +46,7 @@ const originalFetch = window.fetch;
 const fetch = async function (input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
   const API_BASE_URL = (import.meta as any).env.VITE_API_BASE_URL || "";
   let url = input;
-  if (API_BASE_URL && typeof input === "string" && input.startsWith("/api/")) {
+  if (API_BASE_URL && (API_BASE_URL.startsWith("http://") || API_BASE_URL.startsWith("https://")) && typeof input === "string" && input.startsWith("/api/")) {
     const base = API_BASE_URL.endsWith("/") ? API_BASE_URL.slice(0, -1) : API_BASE_URL;
     url = `${base}${input}`;
   }
@@ -326,23 +326,61 @@ export default function App() {
     sparesUsed: [] as { spareId: string; quantity: number }[]
   });
 
-  // Track Firebase Auth State
+  // Track Auth State (Local and persistent)
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
-      setUser(currentUser);
-      if (currentUser) {
-        await syncUser(currentUser);
-      } else {
-        setDbUser(null);
-        setBikesList([]);
-        setSparesList([]);
-        setLogsList([]);
-        setServiceRequestsList([]);
-        setUsersList([]);
+    const restoreSession = async () => {
+      try {
+        const stored = localStorage.getItem("eff_user_session");
+        if (stored) {
+          const session = JSON.parse(stored);
+          const customUser = {
+            uid: session.uid,
+            email: session.email,
+            displayName: session.name,
+            name: session.name,
+            phoneNumber: session.phoneNumber,
+            token: session.token,
+            getIdToken: async () => session.token
+          };
+          setUser(customUser as any);
+          setDbUser(session);
+          await fetchData(customUser as any, session);
+        } else {
+          // Fallback to Firebase Auth in case there is some lingering session,
+          // but our custom auth is the primary one
+          const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
+            if (currentUser) {
+              const token = await currentUser.getIdToken();
+              const customUser = {
+                uid: currentUser.uid,
+                email: currentUser.email || "",
+                displayName: currentUser.displayName,
+                name: currentUser.displayName,
+                phoneNumber: currentUser.phoneNumber,
+                token: token,
+                getIdToken: async () => token
+              };
+              setUser(customUser as any);
+              await syncUser(currentUser);
+            } else {
+              setUser(null);
+              setDbUser(null);
+              setBikesList([]);
+              setSparesList([]);
+              setLogsList([]);
+              setServiceRequestsList([]);
+              setUsersList([]);
+            }
+          });
+          return unsubscribe;
+        }
+      } catch (e) {
+        console.error("Error restoring custom session:", e);
+      } finally {
+        setLoading(false);
       }
-      setLoading(false);
-    });
-    return () => unsubscribe();
+    };
+    restoreSession();
   }, []);
 
   // Sync authenticated user to PostgreSQL database
@@ -425,29 +463,7 @@ export default function App() {
     }
   };
 
-  // Handle Google Sign-In (Recommended & fully configured)
-  const handleGoogleSignIn = async () => {
-    try {
-      setLoading(true);
-      setAuthError("");
-      setAuthSuccess("");
-      await signInWithPopup(auth, googleAuthProvider);
-    } catch (err: any) {
-      console.error("Sign-in failed:", err);
-      setLoading(false);
-      let errorMsg = "Google Sign-In failed. This is usually caused by browser security settings, blocking third-party cookies, or running inside a preview iframe.";
-      if (err?.code === "auth/popup-blocked") {
-        errorMsg = "The sign-in popup was blocked by your browser. Please allow popups for this site and try again.";
-      } else if (err?.code === "auth/cancelled-popup-request" || err?.code === "auth/popup-closed-by-user") {
-        errorMsg = "The Google Sign-In popup was closed before completing authentication. Please try again and keep the popup open until you select your Google account.";
-      } else if (err?.code === "auth/network-request-failed") {
-        errorMsg = "Network error. Please check your internet connection.";
-      }
-      setAuthError(errorMsg);
-    }
-  };
-
-  // Handle Email/Password Sign-In
+  // Handle Email/Password Sign-In (Custom Secure Relational DB Login)
   const handleEmailSignIn = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!authEmail || !authPassword) {
@@ -458,21 +474,45 @@ export default function App() {
     setAuthError("");
     setAuthSuccess("");
     try {
-      await signInWithEmailAndPassword(auth, authEmail.trim(), authPassword);
-      // After success, onAuthStateChanged handles the rest
+      const res = await fetch("/api/auth/custom-login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: authEmail, password: authPassword })
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || "Failed to sign in");
+      }
+      
+      const sessionUser = {
+        uid: data.user.uid,
+        email: data.user.email,
+        name: data.user.name,
+        phoneNumber: data.user.phoneNumber,
+        role: data.user.role,
+        token: data.token
+      };
+
+      // Set session persistently in localStorage
+      localStorage.setItem("eff_user_session", JSON.stringify(sessionUser));
+
+      const customUser = {
+        uid: sessionUser.uid,
+        email: sessionUser.email,
+        displayName: sessionUser.name,
+        name: sessionUser.name,
+        phoneNumber: sessionUser.phoneNumber,
+        token: sessionUser.token,
+        getIdToken: async () => sessionUser.token
+      };
+
+      setUser(customUser as any);
+      setDbUser(sessionUser);
+      setAuthSuccess(data.message || "Signed in successfully!");
+      await fetchData(customUser as any, sessionUser);
     } catch (err: any) {
       console.error("Sign-in failed:", err);
-      let errorMsg = "Incorrect email or password. Please try again.";
-      if (err?.code === "auth/operation-not-allowed") {
-        errorMsg = "Email/Password sign-in is not enabled on this sandboxed Firebase project. Please use the Google Sign-In button above which works instantly!";
-      } else if (err?.code === "auth/user-not-found" || err?.code === "auth/wrong-password" || err?.code === "auth/invalid-credential") {
-        errorMsg = "Invalid email or password.";
-      } else if (err?.code === "auth/invalid-email") {
-        errorMsg = "Invalid email address format.";
-      } else if (err?.code === "auth/too-many-requests") {
-        errorMsg = "Too many failed attempts. Access to this account has been temporarily disabled.";
-      }
-      setAuthError(errorMsg);
+      setAuthError(err.message || "Incorrect email or password. Please try again.");
     } finally {
       setAuthLoading(false);
     }
@@ -481,33 +521,10 @@ export default function App() {
   // Handle Password Reset Email
   const handleForgotPassword = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!authEmail) {
-      setAuthError("Please enter your email address to receive a reset link.");
-      return;
-    }
-    setAuthLoading(true);
-    setAuthError("");
-    setAuthSuccess("");
-    try {
-      await sendPasswordResetEmail(auth, authEmail.trim());
-      setAuthSuccess("A password reset link has been sent to your email! Check your inbox.");
-    } catch (err: any) {
-      console.error("Password reset failed:", err);
-      let errorMsg = "Failed to send reset email. Please ensure your email is correct.";
-      if (err?.code === "auth/operation-not-allowed") {
-        errorMsg = "Password reset is not supported because the Email/Password provider is disabled. Please use the Google Sign-In button above.";
-      } else if (err?.code === "auth/user-not-found") {
-        errorMsg = "No account found with this email address.";
-      } else if (err?.code === "auth/invalid-email") {
-        errorMsg = "Invalid email address format.";
-      }
-      setAuthError(errorMsg);
-    } finally {
-      setAuthLoading(false);
-    }
+    setAuthError("Password reset is currently handled by system administration. Please contact Harrison Njobvu (harrisonnjobvu@gmail.com) for password overrides.");
   };
 
-  // Handle Email/Password/Name/Phone Register
+  // Handle Email/Password/Name/Phone Register (Custom Secure Relational DB Registration)
   const handleEmailRegister = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!authEmail || !authPassword || !authName || !authPhone) {
@@ -520,28 +537,52 @@ export default function App() {
     }
     setAuthLoading(true);
     setAuthError("");
+    setAuthSuccess("");
     try {
-      const userCredential = await createUserWithEmailAndPassword(auth, authEmail.trim(), authPassword);
-      const createdUser = userCredential.user;
-      
-      // Update displayName in Firebase profile
-      await updateProfile(createdUser, { displayName: authName.trim() });
-      
-      // Sync immediately with the DB
-      await syncUser(createdUser, authName.trim(), authPhone.trim());
+      const res = await fetch("/api/auth/custom-register", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          email: authEmail,
+          password: authPassword,
+          name: authName,
+          phoneNumber: authPhone
+        })
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || "Failed to register");
+      }
+
+      const sessionUser = {
+        uid: data.user.uid,
+        email: data.user.email,
+        name: data.user.name,
+        phoneNumber: data.user.phoneNumber,
+        role: data.user.role,
+        token: data.token
+      };
+
+      // Set session persistently in localStorage
+      localStorage.setItem("eff_user_session", JSON.stringify(sessionUser));
+
+      const customUser = {
+        uid: sessionUser.uid,
+        email: sessionUser.email,
+        displayName: sessionUser.name,
+        name: sessionUser.name,
+        phoneNumber: sessionUser.phoneNumber,
+        token: sessionUser.token,
+        getIdToken: async () => sessionUser.token
+      };
+
+      setUser(customUser as any);
+      setDbUser(sessionUser);
+      setAuthSuccess("Account created successfully!");
+      await fetchData(customUser as any, sessionUser);
     } catch (err: any) {
       console.error("Registration failed:", err);
-      let errorMsg = "Failed to create account. Please try again.";
-      if (err?.code === "auth/operation-not-allowed") {
-        errorMsg = "Email/Password registration is disabled on this sandboxed Firebase project. Please use the Google Sign-In button above which works instantly!";
-      } else if (err?.code === "auth/email-already-in-use") {
-        errorMsg = "An account with this email already exists.";
-      } else if (err?.code === "auth/invalid-email") {
-        errorMsg = "Invalid email address format.";
-      } else if (err?.code === "auth/weak-password") {
-        errorMsg = "Password is too weak. Please choose a password of at least 6 characters.";
-      }
-      setAuthError(errorMsg);
+      setAuthError(err.message || "Failed to create account. Please try again.");
     } finally {
       setAuthLoading(false);
     }
@@ -549,6 +590,14 @@ export default function App() {
 
   const handleSignOut = async () => {
     try {
+      localStorage.removeItem("eff_user_session");
+      setUser(null);
+      setDbUser(null);
+      setBikesList([]);
+      setSparesList([]);
+      setLogsList([]);
+      setServiceRequestsList([]);
+      setUsersList([]);
       await signOut(auth);
     } catch (err) {
       console.error("Sign-out failed:", err);
@@ -1190,61 +1239,11 @@ export default function App() {
 
         <div className="mt-8 sm:mx-auto sm:w-full sm:max-w-md relative z-10 px-4 sm:px-0">
           <div className="bg-slate-800 py-8 px-4 shadow-xl rounded-2xl sm:px-10 border border-slate-700/50">
-            {/* Google Sign-In Section (Guaranteed to work in AI Studio auto-provisioned projects) */}
-            <div className="mb-6 space-y-4">
-              <button
-                type="button"
-                onClick={handleGoogleSignIn}
-                className="w-full flex justify-center items-center gap-3 px-4 py-3 border border-slate-700 rounded-xl shadow-lg text-sm font-bold text-slate-900 bg-white hover:bg-slate-100 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 transition-all cursor-pointer shadow-blue-500/10 hover:scale-[1.01] active:scale-[0.99]"
-              >
-                <svg className="w-5 h-5 text-slate-900" viewBox="0 0 24 24" fill="currentColor">
-                  <path d="M12.24 10.285V13.4h6.887c-.275 1.565-1.88 4.604-6.887 4.604-4.33 0-7.859-3.578-7.859-8s3.529-8 7.859-8c2.46 0 4.105 1.025 5.047 1.926l2.427-2.334C17.955 2.192 15.34 1 12.24 1 6.133 1 1.2 5.933 1.2 12s4.933 11 11.04 11c6.372 0 10.596-4.485 10.596-10.79 0-.726-.075-1.285-.164-1.925H12.24z"/>
-                </svg>
-                Sign In with Google (Recommended)
-              </button>
-
-              {isIframe && (
-                <div className="p-3.5 rounded-xl bg-amber-500/10 border border-amber-500/30 text-left">
-                  <div className="flex gap-2.5">
-                    <span className="text-amber-400 font-bold text-sm mt-0.5">⚠️</span>
-                    <div>
-                      <h4 className="text-[11px] font-bold text-amber-400 uppercase tracking-wide">Preview Mode Detection</h4>
-                      <p className="text-slate-300 text-[10px] mt-0.5 leading-relaxed">
-                        Google Sign-In might be blocked by iframe/cookie restrictions. If so, click below to run the app in a new tab where it works instantly.
-                      </p>
-                      <a
-                        href={typeof window !== "undefined" ? window.location.href : "#"}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="inline-flex items-center gap-1 mt-2 px-2.5 py-1.5 rounded bg-amber-500 hover:bg-amber-600 text-slate-950 text-[10px] font-extrabold transition-all cursor-pointer shadow-sm hover:scale-[1.02] active:scale-[0.98]"
-                      >
-                        Open App in New Tab
-                      </a>
-                    </div>
-                  </div>
-                </div>
-              )}
-
-              <div className="flex items-center justify-between pt-1">
-                <span className="w-full border-b border-slate-700/40"></span>
-                <span className="text-[10px] uppercase font-bold text-slate-500 px-3 whitespace-nowrap">Or use Email / Password</span>
-                <span className="w-full border-b border-slate-700/40"></span>
-              </div>
-            </div>
-
             {authMode === "signin" ? (
               <form onSubmit={handleEmailSignIn} className="space-y-5">
                 <div>
                   <h3 className="text-xl font-bold text-white text-center">Sign In</h3>
-                  <p className="text-xs text-slate-400 text-center mt-1">Access your fleet maintenance dashboard</p>
-                </div>
-
-                <div className="p-3 bg-blue-500/10 border border-blue-500/20 rounded-xl text-blue-300 text-xs flex gap-2">
-                  <span className="font-bold">💡</span>
-                  <div>
-                    <span className="font-semibold block">Sandbox project notice:</span>
-                    <span>To avoid permission restrictions on this sandboxed Firebase project, please use the **Google Sign-In** button above, which is pre-authorized and works instantly!</span>
-                  </div>
+                  <p className="text-xs text-slate-400 text-center mt-1">Access your EFF Zambia fleet maintenance dashboard</p>
                 </div>
 
                 {authError && (
@@ -1331,14 +1330,6 @@ export default function App() {
                 <div>
                   <h3 className="text-xl font-bold text-white text-center">Create Account</h3>
                   <p className="text-xs text-slate-400 text-center mt-1">Register for EFF Fleet Maintenance access</p>
-                </div>
-
-                <div className="p-3 bg-blue-500/10 border border-blue-500/20 rounded-xl text-blue-300 text-xs flex gap-2">
-                  <span className="font-bold">💡</span>
-                  <div>
-                    <span className="font-semibold block">Sandbox project notice:</span>
-                    <span>To avoid permission restrictions on this sandboxed Firebase project, please use the **Google Sign-In** button above, which is pre-authorized and works instantly!</span>
-                  </div>
                 </div>
 
                 {authError && (
@@ -1431,7 +1422,7 @@ export default function App() {
               <form onSubmit={handleForgotPassword} className="space-y-5">
                 <div>
                   <h3 className="text-xl font-bold text-white text-center">Reset Password</h3>
-                  <p className="text-xs text-slate-400 text-center mt-1">Enter your email address and we'll send you a secure link to reset your password.</p>
+                  <p className="text-xs text-slate-400 text-center mt-1">Enter your email address to submit a password reset request.</p>
                 </div>
 
                 {authError && (

@@ -2,9 +2,30 @@ import express from "express";
 import path from "path";
 import { createServer as createViteServer } from "vite";
 import * as dotenv from "dotenv";
+import crypto from "crypto";
 
 // Load environment variables
 dotenv.config();
+
+const JWT_SECRET = process.env.JWT_SECRET || 'eff-fleet-maintenance-system-secret-2026';
+
+function hashPassword(password: string) {
+  return crypto.createHmac("sha256", JWT_SECRET).update(password).digest("hex");
+}
+
+function generateCustomToken(user: { uid: string; email: string; role: string; name?: string | null; phoneNumber?: string | null }) {
+  const payload = {
+    uid: user.uid,
+    email: user.email,
+    role: user.role,
+    name: user.name || "",
+    phoneNumber: user.phoneNumber || "",
+    expires: Date.now() + 24 * 60 * 60 * 1000 // 24 hours
+  };
+  const payloadStr = Buffer.from(JSON.stringify(payload)).toString("base64");
+  const signature = crypto.createHmac("sha256", JWT_SECRET).update(payloadStr).digest("hex");
+  return `${payloadStr}.${signature}`;
+}
 
 import { db } from "./src/db/index.ts";
 import { users, bikes, sparesInventory, serviceLogs, serviceLogSpares, serviceRequests } from "./src/db/schema.ts";
@@ -35,6 +56,89 @@ async function startServer() {
   // Health check
   app.get("/api/health", (req, res) => {
     res.json({ status: "ok" });
+  });
+
+  // Custom Registration Route (using relational PostgreSQL storage)
+  app.post("/api/auth/custom-register", async (req, res) => {
+    try {
+      const { email, password, name, phoneNumber } = req.body;
+      if (!email || !password) {
+        return res.status(400).json({ error: "Email and password are required" });
+      }
+
+      const lowerEmail = email.trim().toLowerCase();
+      
+      // Check if user already exists
+      const existing = await db.select().from(users).where(eq(users.email, lowerEmail));
+      if (existing.length > 0) {
+        return res.status(400).json({ error: "An account with this email already exists" });
+      }
+
+      // Hash password
+      const passwordHash = hashPassword(password);
+      const uid = "cust_" + Date.now() + "_" + Math.random().toString(36).substring(2, 7);
+      
+      // Determine role
+      const isAdminEmail = lowerEmail === "harrisonnjobvu@gmail.com" || lowerEmail === "harrisonnjobvu@gamil.com" || lowerEmail === "admin@eff.org";
+      const role = isAdminEmail ? "admin" : "user";
+
+      const [newUser] = await db.insert(users).values({
+        uid,
+        email: lowerEmail,
+        passwordHash,
+        name: name || null,
+        phoneNumber: phoneNumber || null,
+        role
+      }).returning();
+
+      const token = generateCustomToken(newUser);
+      res.json({ status: "success", user: newUser, token });
+    } catch (error: any) {
+      console.error("Custom registration error:", error);
+      res.status(500).json({ error: "Failed to register user", details: error.message });
+    }
+  });
+
+  // Custom Login Route (using relational PostgreSQL storage)
+  app.post("/api/auth/custom-login", async (req, res) => {
+    try {
+      const { email, password } = req.body;
+      if (!email || !password) {
+        return res.status(400).json({ error: "Email and password are required" });
+      }
+
+      const lowerEmail = email.trim().toLowerCase();
+      const existing = await db.select().from(users).where(eq(users.email, lowerEmail));
+      
+      if (existing.length === 0) {
+        return res.status(400).json({ error: "Invalid email or password" });
+      }
+
+      const user = existing[0];
+      const passwordHash = hashPassword(password);
+
+      // If passwordHash matches, log in
+      if (user.passwordHash && user.passwordHash === passwordHash) {
+        const token = generateCustomToken(user);
+        return res.json({ status: "success", user, token });
+      }
+      
+      // First-time password initialization for pre-registered users or empty passwords
+      if (!user.passwordHash) {
+        const [updatedUser] = await db.update(users)
+          .set({ passwordHash })
+          .where(eq(users.id, user.id))
+          .returning();
+        
+        const token = generateCustomToken(updatedUser);
+        return res.json({ status: "success", user: updatedUser, token, message: "Welcome! Since this is your first sign-in, your password has been set." });
+      }
+
+      return res.status(400).json({ error: "Invalid email or password" });
+    } catch (error: any) {
+      console.error("Custom login error:", error);
+      res.status(500).json({ error: "Failed to login", details: error.message });
+    }
   });
 
   // Sync user profile with PostgreSQL on Sign-In
