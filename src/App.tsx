@@ -82,7 +82,7 @@ const fetch = async function (input: RequestInfo | URL, init?: RequestInit): Pro
       } catch (e: any) {
         return { 
           error: "Invalid JSON Response", 
-          details: `The server returned a non-JSON response (Status ${response.status}). If you are running on Cloudflare Pages, please ensure your VITE_API_BASE_URL is configured correctly to point to your live backend.`,
+          details: `The server returned a non-JSON response (Status ${response.status}). If you are running on Cloudflare Pages, this is likely because your VITE_API_BASE_URL is pointing to your protected AI Studio dev URL (ais-dev-...). You need to deploy your backend to a public hosting provider (like Render, Heroku, or Cloud Run) and update VITE_API_BASE_URL.`,
           raw: e.message 
         };
       }
