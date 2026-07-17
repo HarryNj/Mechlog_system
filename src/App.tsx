@@ -28,6 +28,7 @@ import {
 } from "lucide-react";
 import * as XLSX from "xlsx";
 import { auth, googleAuthProvider } from "./lib/firebase.ts";
+import GoogleDriveSyncPanel from "./components/GoogleDriveSyncPanel.tsx";
 import { 
   signOut, 
   onAuthStateChanged, 
@@ -2154,6 +2155,18 @@ export default function App() {
                     )}
                   </div>
                 </div>
+              </div>
+
+              {/* Google Drive Cloud Sync Panel */}
+              <div className="mt-6">
+                <GoogleDriveSyncPanel
+                  bikesList={bikesList}
+                  sparesList={sparesList}
+                  logsList={logsList}
+                  requestsList={requestsList}
+                  user={user}
+                  onRefreshData={fetchData}
+                />
               </div>
             </div>
           )}
