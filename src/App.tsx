@@ -27,7 +27,7 @@ import {
   Wrench
 } from "lucide-react";
 import * as XLSX from "xlsx";
-import { auth } from "./lib/firebase.ts";
+import { auth, googleAuthProvider } from "./lib/firebase.ts";
 import { 
   signOut, 
   onAuthStateChanged, 
@@ -35,7 +35,8 @@ import {
   createUserWithEmailAndPassword,
   signInWithEmailAndPassword,
   updateProfile,
-  sendPasswordResetEmail
+  sendPasswordResetEmail,
+  signInWithPopup
 } from "firebase/auth";
 // @ts-ignore
 import effLogo from "./assets/images/eff_logo_1784229618019.jpg";
@@ -424,6 +425,28 @@ export default function App() {
     }
   };
 
+  // Handle Google Sign-In (Recommended & fully configured)
+  const handleGoogleSignIn = async () => {
+    try {
+      setLoading(true);
+      setAuthError("");
+      setAuthSuccess("");
+      await signInWithPopup(auth, googleAuthProvider);
+    } catch (err: any) {
+      console.error("Sign-in failed:", err);
+      setLoading(false);
+      let errorMsg = "Google Sign-In failed. This is usually caused by browser security settings, blocking third-party cookies, or running inside a preview iframe.";
+      if (err?.code === "auth/popup-blocked") {
+        errorMsg = "The sign-in popup was blocked by your browser. Please allow popups for this site and try again.";
+      } else if (err?.code === "auth/cancelled-popup-request") {
+        errorMsg = "The sign-in popup was closed before completing authentication. Please try again.";
+      } else if (err?.code === "auth/network-request-failed") {
+        errorMsg = "Network error. Please check your internet connection.";
+      }
+      setAuthError(errorMsg);
+    }
+  };
+
   // Handle Email/Password Sign-In
   const handleEmailSignIn = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -440,7 +463,9 @@ export default function App() {
     } catch (err: any) {
       console.error("Sign-in failed:", err);
       let errorMsg = "Incorrect email or password. Please try again.";
-      if (err?.code === "auth/user-not-found" || err?.code === "auth/wrong-password" || err?.code === "auth/invalid-credential") {
+      if (err?.code === "auth/operation-not-allowed") {
+        errorMsg = "Email/Password sign-in is not enabled on this sandboxed Firebase project. Please use the Google Sign-In button above which works instantly!";
+      } else if (err?.code === "auth/user-not-found" || err?.code === "auth/wrong-password" || err?.code === "auth/invalid-credential") {
         errorMsg = "Invalid email or password.";
       } else if (err?.code === "auth/invalid-email") {
         errorMsg = "Invalid email address format.";
@@ -469,7 +494,9 @@ export default function App() {
     } catch (err: any) {
       console.error("Password reset failed:", err);
       let errorMsg = "Failed to send reset email. Please ensure your email is correct.";
-      if (err?.code === "auth/user-not-found") {
+      if (err?.code === "auth/operation-not-allowed") {
+        errorMsg = "Password reset is not supported because the Email/Password provider is disabled. Please use the Google Sign-In button above.";
+      } else if (err?.code === "auth/user-not-found") {
         errorMsg = "No account found with this email address.";
       } else if (err?.code === "auth/invalid-email") {
         errorMsg = "Invalid email address format.";
@@ -505,7 +532,9 @@ export default function App() {
     } catch (err: any) {
       console.error("Registration failed:", err);
       let errorMsg = "Failed to create account. Please try again.";
-      if (err?.code === "auth/email-already-in-use") {
+      if (err?.code === "auth/operation-not-allowed") {
+        errorMsg = "Email/Password registration is disabled on this sandboxed Firebase project. Please use the Google Sign-In button above which works instantly!";
+      } else if (err?.code === "auth/email-already-in-use") {
         errorMsg = "An account with this email already exists.";
       } else if (err?.code === "auth/invalid-email") {
         errorMsg = "Invalid email address format.";
@@ -1161,6 +1190,48 @@ export default function App() {
 
         <div className="mt-8 sm:mx-auto sm:w-full sm:max-w-md relative z-10 px-4 sm:px-0">
           <div className="bg-slate-800 py-8 px-4 shadow-xl rounded-2xl sm:px-10 border border-slate-700/50">
+            {/* Google Sign-In Section (Guaranteed to work in AI Studio auto-provisioned projects) */}
+            <div className="mb-6 space-y-4">
+              <button
+                type="button"
+                onClick={handleGoogleSignIn}
+                className="w-full flex justify-center items-center gap-3 px-4 py-3 border border-slate-700 rounded-xl shadow-lg text-sm font-bold text-slate-900 bg-white hover:bg-slate-100 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 transition-all cursor-pointer shadow-blue-500/10 hover:scale-[1.01] active:scale-[0.99]"
+              >
+                <svg className="w-5 h-5 text-slate-900" viewBox="0 0 24 24" fill="currentColor">
+                  <path d="M12.24 10.285V13.4h6.887c-.275 1.565-1.88 4.604-6.887 4.604-4.33 0-7.859-3.578-7.859-8s3.529-8 7.859-8c2.46 0 4.105 1.025 5.047 1.926l2.427-2.334C17.955 2.192 15.34 1 12.24 1 6.133 1 1.2 5.933 1.2 12s4.933 11 11.04 11c6.372 0 10.596-4.485 10.596-10.79 0-.726-.075-1.285-.164-1.925H12.24z"/>
+                </svg>
+                Sign In with Google (Recommended)
+              </button>
+
+              {isIframe && (
+                <div className="p-3.5 rounded-xl bg-amber-500/10 border border-amber-500/30 text-left">
+                  <div className="flex gap-2.5">
+                    <span className="text-amber-400 font-bold text-sm mt-0.5">⚠️</span>
+                    <div>
+                      <h4 className="text-[11px] font-bold text-amber-400 uppercase tracking-wide">Preview Mode Detection</h4>
+                      <p className="text-slate-300 text-[10px] mt-0.5 leading-relaxed">
+                        Google Sign-In might be blocked by iframe/cookie restrictions. If so, click below to run the app in a new tab where it works instantly.
+                      </p>
+                      <a
+                        href={typeof window !== "undefined" ? window.location.href : "#"}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="inline-flex items-center gap-1 mt-2 px-2.5 py-1.5 rounded bg-amber-500 hover:bg-amber-600 text-slate-950 text-[10px] font-extrabold transition-all cursor-pointer shadow-sm hover:scale-[1.02] active:scale-[0.98]"
+                      >
+                        Open App in New Tab
+                      </a>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              <div className="flex items-center justify-between pt-1">
+                <span className="w-full border-b border-slate-700/40"></span>
+                <span className="text-[10px] uppercase font-bold text-slate-500 px-3 whitespace-nowrap">Or use Email / Password</span>
+                <span className="w-full border-b border-slate-700/40"></span>
+              </div>
+            </div>
+
             {authMode === "signin" ? (
               <form onSubmit={handleEmailSignIn} className="space-y-5">
                 <div>
