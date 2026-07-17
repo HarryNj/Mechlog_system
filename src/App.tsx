@@ -69,6 +69,24 @@ const fetch = async function (input: RequestInfo | URL, init?: RequestInit): Pro
         headers: { "Content-Type": "application/json" }
       });
     }
+
+    // Override json method to handle non-JSON or empty bodies safely
+    const originalJson = response.json.bind(response);
+    response.json = async function() {
+      try {
+        const text = await response.text();
+        if (!text || text.trim() === "") {
+          return { error: "Empty Response", details: `The server returned an empty body with status code ${response.status}.` };
+        }
+        return JSON.parse(text);
+      } catch (e: any) {
+        return { 
+          error: "Invalid JSON Response", 
+          details: `The server returned a non-JSON response (Status ${response.status}). If you are running on Cloudflare Pages, please ensure your VITE_API_BASE_URL is configured correctly to point to your live backend.`,
+          raw: e.message 
+        };
+      }
+    };
   }
   
   return response;
@@ -442,7 +460,7 @@ export default function App() {
       const failedResult = results.find(r => !r.ok);
       if (failedResult) {
         try {
-          const errData = await failedResult.clone().json();
+          const errData = await failedResult.json();
           if (errData && errData.error === "Invalid API Response") {
             alert(errData.details);
           }
