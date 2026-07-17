@@ -32,6 +32,7 @@ import {
 } from "lucide-react";
 import * as XLSX from "xlsx";
 import { auth, googleAuthProvider } from "./lib/firebase.ts";
+import { supabase } from "./lib/supabase.ts";
 import { 
   signOut, 
   onAuthStateChanged, 
@@ -494,78 +495,45 @@ export default function App() {
     if (!currentUser) return;
     if (!isSilent) setSyncing(true);
     try {
-      const token = await currentUser.getIdToken();
-      const headers = { "Authorization": `Bearer ${token}` };
-
       const lowerEmail = currentUser.email?.toLowerCase() || "";
       const isAdminEmail = lowerEmail === "harrisonnjobvu@gmail.com" || lowerEmail === "harrisonnjobvu@gamil.com" || lowerEmail === "admin@effzambia.org" || lowerEmail === "admin@eff.org";
       const isAdminUser = syncedDbUser?.role === "admin" || isAdminEmail;
 
-      const fetchPromises: Promise<any>[] = [
-        fetch("/api/bikes", { headers }),
-        fetch("/api/spares", { headers }),
-        fetch("/api/logs", { headers }),
-        fetch("/api/requests", { headers })
-      ];
+      const [bikesRes, sparesRes, logsRes, requestsRes, usersRes] = await Promise.all([
+        supabase.from('bikes').select('*'),
+        supabase.from('spares').select('*'),
+        supabase.from('service_logs').select('*'),
+        supabase.from('service_requests').select('*'),
+        isAdminUser ? supabase.from('users').select('*') : Promise.resolve({ data: [], error: null })
+      ]);
 
-      if (isAdminUser) {
-        fetchPromises.push(fetch("/api/users", { headers }));
-      }
+      if (bikesRes.error) console.error("Error fetching bikes:", bikesRes.error);
+      else { setBikesList(bikesRes.data); saveToStorage("bikes", bikesRes.data); }
 
-      const results = await Promise.all(fetchPromises);
-      
-      // Log errors if any fetch failed
-      results.forEach((r, i) => {
-        if (!r.ok) {
-          console.error(`Fetch failed for index ${i} (${r.url}): ${r.status} ${r.statusText}`);
-        }
-      });
-      
-      // Check for any failures and handle gracefully
-      const failedResult = results.find(r => !r.ok);
-      if (failedResult && !isSilent) {
-        try {
-          const errData = await failedResult.json();
-          if (errData && errData.error === "Invalid API Response") {
-            alert(errData.details);
-          }
-        } catch (_) {}
-      }
-      
-      if (results[0].ok) {
-        const data = await results[0].json();
-        setBikesList(data);
-        saveToStorage("bikes", data);
-      }
-      if (results[1].ok) {
-        const data = await results[1].json();
-        setSparesList(data);
-        saveToStorage("spares", data);
-      }
-      if (results[2].ok) {
-        const data = await results[2].json();
-        const mappedLogs = data.map((l: any) => ({
+      if (sparesRes.error) console.error("Error fetching spares:", sparesRes.error);
+      else { setSparesList(sparesRes.data); saveToStorage("spares", sparesRes.data); }
+
+      if (logsRes.error) console.error("Error fetching logs:", logsRes.error);
+      else {
+        const mappedLogs = logsRes.data.map((l: any) => ({
           ...l,
-          bikeReg: l.bike?.regNo || `Bike #${l.bikeId}`
+          bikeReg: l.bike_reg || `Bike #${l.bike_id}`
         }));
         setLogsList(mappedLogs);
         saveToStorage("logs", mappedLogs);
       }
-      if (results[3].ok) {
-        const data = await results[3].json();
-        setServiceRequestsList(data);
-        saveToStorage("requests", data);
+      
+      if (requestsRes.error) console.error("Error fetching requests:", requestsRes.error);
+      else { setServiceRequestsList(requestsRes.data); saveToStorage("requests", requestsRes.data); }
+      
+      if (isAdminUser && usersRes.data) {
+        setUsersList(usersRes.data);
+        saveToStorage("users", usersRes.data);
       }
-      if (isAdminUser) {
-        if (results[4] && results[4].ok) {
-          const data = await results[4].json();
-          setUsersList(data);
-          saveToStorage("users", data);
-        }
-      }
+      
       setLastSynced(new Date());
     } catch (err) {
-      console.error("Error fetching data:", err);
+      console.error("Error fetching data from Supabase:", err);
     } finally {
       if (!isSilent) setSyncing(false);
     }
@@ -911,45 +879,37 @@ export default function App() {
     e.preventDefault();
     if (!user) return;
 
-    const token = await user.getIdToken();
-    const url = editingBike ? `/api/bikes/${editingBike.id}` : "/api/bikes";
-    const method = editingBike ? "PUT" : "POST";
-
     try {
-      const res = await offlineFetch(url, { method,
-        headers: {
-          "Content-Type": "application/json",
-          "Authorization": `Bearer ${token}`
-        },
-        body: JSON.stringify({
+      if (editingBike) {
+        const { error } = await supabase.from('bikes').update({
           ...bikeForm,
-          dateAdded: editingBike ? editingBike.dateAdded : new Date().toISOString().split("T")[0]
-        })
-      });
-
-      if (!res.ok) {
-        const errorData = await res.json();
-        alert(errorData.error || "Failed to save bike");
-        return;
+        }).eq('id', editingBike.id);
+        if (error) throw error;
+      } else {
+        const { error } = await supabase.from('bikes').insert({
+          ...bikeForm,
+          dateAdded: new Date().toISOString().split("T")[0]
+        });
+        if (error) throw error;
       }
 
       await fetchData();
       setBikeModalOpen(false);
-    } catch (err) {
+    } catch (err: any) {
       console.error("Error saving bike:", err);
+      alert(err.message || "Failed to save bike");
     }
   };
 
   const handleDeleteBike = async (id: number) => {
     if (!confirm("Are you sure you want to delete this bike? All associated service logs will be permanently deleted.") || !user) return;
     try {
-      const token = await user.getIdToken();
-      await offlineFetch(`/api/bikes/${id}`, { method: "DELETE",
-        headers: { "Authorization": `Bearer ${token}` }
-      });
+      const { error } = await supabase.from('bikes').delete().eq('id', id);
+      if (error) throw error;
       await fetchData();
-    } catch (err) {
+    } catch (err: any) {
       console.error("Error deleting bike:", err);
+      alert(err.message || "Failed to delete bike");
     }
   };
 
