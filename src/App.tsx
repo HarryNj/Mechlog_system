@@ -288,6 +288,68 @@ export default function App() {
   
   const [loading, setLoading] = useState(true);
   const [syncing, setSyncing] = useState(false);
+  const [isOnline, setIsOnline] = useState(typeof navigator !== 'undefined' ? navigator.onLine : true);
+  const [offlineQueue, setOfflineQueue] = useState<any[]>(() => {
+    try { return JSON.parse(localStorage.getItem('eff_offline_queue') || '[]'); }
+    catch { return []; }
+  });
+
+  useEffect(() => {
+    const handleOnline = async () => {
+      setIsOnline(true);
+      await processOfflineQueue();
+    };
+    const handleOffline = () => setIsOnline(false);
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
+    return () => {
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
+    };
+  }, []);
+
+  const processOfflineQueue = async () => {
+    const queue = JSON.parse(localStorage.getItem('eff_offline_queue') || '[]');
+    if (queue.length === 0) return;
+    
+    setSyncing(true);
+    const newQueue = [];
+    let syncedCount = 0;
+    for (const req of queue) {
+      try {
+        const res = await fetch(req.url, req.options);
+        if (res.ok) {
+          syncedCount++;
+        } else {
+          newQueue.push(req);
+        }
+      } catch (err) {
+        newQueue.push(req);
+      }
+    }
+    
+    localStorage.setItem('eff_offline_queue', JSON.stringify(newQueue));
+    setOfflineQueue(newQueue);
+    if (syncedCount > 0) {
+      fetchData();
+      alert(`Synced ${syncedCount} offline actions successfully.`);
+    }
+    setSyncing(false);
+  };
+
+  const offlineFetch = async (url: string, options: any) => {
+    if (navigator.onLine) {
+      return await fetch(url, options);
+    } else {
+      const queue = JSON.parse(localStorage.getItem('eff_offline_queue') || '[]');
+      queue.push({ url, options });
+      localStorage.setItem('eff_offline_queue', JSON.stringify(queue));
+      setOfflineQueue(queue);
+      alert('You are currently offline. This action has been saved locally and will sync when network is available.');
+      return { ok: true, json: async () => ({ status: "success", offline: true }) } as any;
+    }
+  };
+
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [activeTab, setActiveTab] = useState<"dashboard" | "logs" | "bikes" | "spares" | "users" | "requests">("dashboard");
 
@@ -617,8 +679,7 @@ export default function App() {
     const method = editingUser ? "PUT" : "POST";
 
     try {
-      const res = await fetch(url, {
-        method,
+      const res = await offlineFetch(url, { method,
         headers: {
           "Content-Type": "application/json",
           "Authorization": `Bearer ${token}`
@@ -644,8 +705,7 @@ export default function App() {
 
     try {
       const token = await user.getIdToken();
-      const res = await fetch(`/api/users/${userId}`, {
-        method: "DELETE",
+      const res = await offlineFetch(`/api/users/${userId}`, { method: "DELETE",
         headers: {
           "Authorization": `Bearer ${token}`
         }
@@ -677,7 +737,7 @@ export default function App() {
 
     const token = await user.getIdToken();
     try {
-      const res = await fetch("/api/requests", {
+      const res = await offlineFetch("/api/requests", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -707,8 +767,7 @@ export default function App() {
 
     try {
       const token = await user.getIdToken();
-      const res = await fetch(`/api/requests/${requestId}`, {
-        method: "DELETE",
+      const res = await offlineFetch(`/api/requests/${requestId}`, { method: "DELETE",
         headers: {
           "Authorization": `Bearer ${token}`
         }
@@ -732,8 +791,7 @@ export default function App() {
     // Set request status to "done" in database first
     const token = await user.getIdToken();
     try {
-      await fetch(`/api/requests/${reqObj.id}`, {
-        method: "PUT",
+      await offlineFetch(`/api/requests/${reqObj.id}`, { method: "PUT",
         headers: {
           "Content-Type": "application/json",
           "Authorization": `Bearer ${token}`
@@ -794,8 +852,7 @@ export default function App() {
     const method = editingBike ? "PUT" : "POST";
 
     try {
-      const res = await fetch(url, {
-        method,
+      const res = await offlineFetch(url, { method,
         headers: {
           "Content-Type": "application/json",
           "Authorization": `Bearer ${token}`
@@ -823,8 +880,7 @@ export default function App() {
     if (!confirm("Are you sure you want to delete this bike? All associated service logs will be permanently deleted.") || !user) return;
     try {
       const token = await user.getIdToken();
-      await fetch(`/api/bikes/${id}`, {
-        method: "DELETE",
+      await offlineFetch(`/api/bikes/${id}`, { method: "DELETE",
         headers: { "Authorization": `Bearer ${token}` }
       });
       await fetchData();
@@ -862,8 +918,7 @@ export default function App() {
     const method = editingSpare ? "PUT" : "POST";
 
     try {
-      const res = await fetch(url, {
-        method,
+      const res = await offlineFetch(url, { method,
         headers: {
           "Content-Type": "application/json",
           "Authorization": `Bearer ${token}`
@@ -888,8 +943,7 @@ export default function App() {
     if (!confirm("Are you sure you want to remove this spare from inventory?") || !user) return;
     try {
       const token = await user.getIdToken();
-      await fetch(`/api/spares/${id}`, {
-        method: "DELETE",
+      await offlineFetch(`/api/spares/${id}`, { method: "DELETE",
         headers: { "Authorization": `Bearer ${token}` }
       });
       await fetchData();
@@ -971,8 +1025,7 @@ export default function App() {
     const method = editingLog ? "PUT" : "POST";
 
     try {
-      const res = await fetch(url, {
-        method,
+      const res = await offlineFetch(url, { method,
         headers: {
           "Content-Type": "application/json",
           "Authorization": `Bearer ${token}`
@@ -1010,8 +1063,7 @@ export default function App() {
     if (!confirm("Are you sure you want to delete this service log? Used spares will be returned to inventory.") || !user) return;
     try {
       const token = await user.getIdToken();
-      await fetch(`/api/logs/${id}`, {
-        method: "DELETE",
+      await offlineFetch(`/api/logs/${id}`, { method: "DELETE",
         headers: { "Authorization": `Bearer ${token}` }
       });
       await fetchData();
@@ -1443,6 +1495,13 @@ export default function App() {
               <div>
                 <h1 className="font-bold text-sm tracking-wide text-white uppercase">EFF Zambia</h1>
                 <p className="text-xs text-slate-400">Fleet MechLog</p>
+            {!isOnline && (
+              <div className="flex items-center gap-2 mt-4 px-3 py-2 bg-amber-500/10 text-amber-500 rounded-lg text-xs font-semibold">
+                <span className="w-2 h-2 rounded-full bg-amber-500 animate-pulse"></span>
+                Offline Mode ({offlineQueue.length} unsynced)
+              </div>
+            )}
+
               </div>
             </div>
             <button onClick={() => setSidebarOpen(false)} className="md:hidden text-slate-400 hover:text-white">
