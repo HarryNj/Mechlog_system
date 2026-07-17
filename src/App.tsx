@@ -350,6 +350,22 @@ export default function App() {
     }
   };
 
+  // Local Storage Helpers
+  const saveToStorage = (key: string, data: any) => {
+    try {
+      localStorage.setItem(`eff_cache_${key}`, JSON.stringify(data));
+    } catch (e) { console.error("Error saving to storage:", e); }
+  };
+  const loadFromStorage = (key: string) => {
+    try {
+      const data = localStorage.getItem(`eff_cache_${key}`);
+      return data ? JSON.parse(data) : [];
+    } catch (e) {
+      console.error("Error loading from storage:", e);
+      return [];
+    }
+  };
+
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [activeTab, setActiveTab] = useState<"dashboard" | "logs" | "bikes" | "spares" | "users" | "requests">("dashboard");
 
@@ -372,22 +388,6 @@ export default function App() {
   const [logStatusFilter, setLogStatusFilter] = useState("");
   const [logDistrictFilter, setLogDistrictFilter] = useState("");
   const [sparesTab, setSparesTab] = useState<"in_stock" | "used">("in_stock");
-
-  // Local Storage Helpers
-  const saveToStorage = (key: string, data: any) => {
-    try {
-      localStorage.setItem(`eff_cache_${key}`, JSON.stringify(data));
-    } catch (e) { console.error("Error saving to storage:", e); }
-  };
-  const loadFromStorage = (key: string) => {
-    try {
-      const data = localStorage.getItem(`eff_cache_${key}`);
-      return data ? JSON.parse(data) : [];
-    } catch (e) {
-      console.error("Error loading from storage:", e);
-      return [];
-    }
-  };
 
   // Modals state
   const [agreementModalOpen, setAgreementModalOpen] = useState(false);
