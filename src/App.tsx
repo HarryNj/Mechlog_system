@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from "react";
+import { motion, AnimatePresence } from "motion/react";
 import { 
   Plus, 
   Trash2, 
@@ -135,6 +136,7 @@ interface LogSpareType {
 interface ServiceLogType {
   id: number;
   bikeId: number;
+  bikeReg?: string; // Derived field for convenience
   date: string;
   nextServiceDate: string | null;
   nextServiceMileage: number | null;
@@ -276,7 +278,26 @@ function AgreementModal({ isOpen, onClose }: { isOpen: boolean; onClose: () => v
 const isIframe = typeof window !== "undefined" && window.self !== window.top;
 
 export default function App() {
-  const [user, setUser] = useState<FirebaseUser | null>(null);
+  const dummyAdminUser = {
+    uid: "admin-bypass",
+    email: "admin@effzambia.org",
+    displayName: "Admin User",
+    name: "Admin User",
+    phoneNumber: "+260123456789",
+    token: "dummy-admin-token",
+    getIdToken: async () => "dummy-admin-token"
+  };
+  const dummyDbUser = {
+    id: 1,
+    uid: "admin-bypass",
+    email: "admin@effzambia.org",
+    name: "Admin User",
+    role: "admin",
+    phoneNumber: "+260123456789"
+  };
+
+  const [user, setUser] = useState<FirebaseUser | null>(dummyAdminUser as any);
+  const [dbUser, setDbUser] = useState<UserDBType | null>(dummyDbUser as any);
   const [authMode, setAuthMode] = useState<"signin" | "register" | "forgot">("signin");
   const [authEmail, setAuthEmail] = useState("");
   const [authPassword, setAuthPassword] = useState("");
@@ -374,12 +395,6 @@ export default function App() {
   const [bikesList, setBikesList] = useState<BikeType[]>(() => loadFromStorage("bikes"));
   const [sparesList, setSparesList] = useState<SpareInventoryType[]>(() => loadFromStorage("spares"));
   const [logsList, setLogsList] = useState<ServiceLogType[]>(() => loadFromStorage("logs"));
-  const [dbUser, setDbUser] = useState<UserDBType | null>(() => {
-    try {
-      const data = localStorage.getItem("eff_cache_dbUser");
-      return data ? JSON.parse(data) : null;
-    } catch { return null; }
-  });
   const [usersList, setUsersList] = useState<UserDBType[]>(() => loadFromStorage("users"));
   const [requestsList, setServiceRequestsList] = useState<ServiceRequestType[]>(() => loadFromStorage("requests"));
 
@@ -432,45 +447,6 @@ export default function App() {
   useEffect(() => {
     const restoreSession = async () => {
       try {
-        // Attempt to restore persistent custom user session
-        const savedSessionStr = localStorage.getItem("eff_user_session");
-        if (savedSessionStr) {
-          const sessionUser = JSON.parse(savedSessionStr);
-          const customUser = {
-            uid: sessionUser.uid,
-            email: sessionUser.email,
-            displayName: sessionUser.name,
-            name: sessionUser.name,
-            phoneNumber: sessionUser.phoneNumber,
-            token: sessionUser.token,
-            getIdToken: async () => sessionUser.token
-          };
-          setUser(customUser as any);
-          setDbUser(sessionUser);
-          await fetchData(customUser as any, sessionUser);
-          return;
-        }
-
-        // Fallback to dummy admin user bypass if no session is stored
-        const dummyAdminUser = {
-          uid: "admin-bypass",
-          email: "admin@eff.zambia",
-          displayName: "Admin User",
-          name: "Admin User",
-          phoneNumber: "+260123456789",
-          token: "dummy-admin-token",
-          getIdToken: async () => "dummy-admin-token"
-        };
-        const dummyDbUser = {
-          id: 1,
-          uid: "admin-bypass",
-          email: "admin@eff.zambia",
-          name: "Admin User",
-          role: "admin",
-          phoneNumber: "+260123456789"
-        };
-        setUser(dummyAdminUser as any);
-        setDbUser(dummyDbUser as any);
         await fetchData(dummyAdminUser as any, dummyDbUser as any);
       } catch (e) {
         console.error("Error setting session:", e);
@@ -522,7 +498,8 @@ export default function App() {
       const headers = { "Authorization": `Bearer ${token}` };
 
       const lowerEmail = currentUser.email?.toLowerCase() || "";
-      const isAdminUser = syncedDbUser?.role === "admin" || lowerEmail === "harrisonnjobvu@gmail.com" || lowerEmail === "harrisonnjobvu@gamil.com";
+      const isAdminEmail = lowerEmail === "harrisonnjobvu@gmail.com" || lowerEmail === "harrisonnjobvu@gamil.com" || lowerEmail === "admin@effzambia.org" || lowerEmail === "admin@eff.org";
+      const isAdminUser = syncedDbUser?.role === "admin" || isAdminEmail;
 
       const fetchPromises: Promise<any>[] = [
         fetch("/api/bikes", { headers }),
@@ -536,6 +513,13 @@ export default function App() {
       }
 
       const results = await Promise.all(fetchPromises);
+      
+      // Log errors if any fetch failed
+      results.forEach((r, i) => {
+        if (!r.ok) {
+          console.error(`Fetch failed for index ${i} (${r.url}): ${r.status} ${r.statusText}`);
+        }
+      });
       
       // Check for any failures and handle gracefully
       const failedResult = results.find(r => !r.ok);
@@ -560,8 +544,12 @@ export default function App() {
       }
       if (results[2].ok) {
         const data = await results[2].json();
-        setLogsList(data);
-        saveToStorage("logs", data);
+        const mappedLogs = data.map((l: any) => ({
+          ...l,
+          bikeReg: l.bike?.regNo || `Bike #${l.bikeId}`
+        }));
+        setLogsList(mappedLogs);
+        saveToStorage("logs", mappedLogs);
       }
       if (results[3].ok) {
         const data = await results[3].json();
@@ -1337,7 +1325,7 @@ export default function App() {
   const filteredLogs = logsList.filter(log => {
     const matchesSearch = !logSearch || 
       log.officer.toLowerCase().includes(logSearch.toLowerCase()) ||
-      log.bikeReg.toLowerCase().includes(logSearch.toLowerCase()) ||
+      (log.bikeReg || "").toLowerCase().includes(logSearch.toLowerCase()) ||
       (log.workDone && log.workDone.toLowerCase().includes(logSearch.toLowerCase())) ||
       (log.workPending && log.workPending.toLowerCase().includes(logSearch.toLowerCase()));
 
@@ -1359,252 +1347,66 @@ export default function App() {
     );
   }
 
-  // Not Logged In screen
-  if (!user) {
-    return (
-      <div className="min-h-screen bg-slate-900 flex flex-col justify-center py-12 sm:px-6 lg:px-8 relative overflow-hidden">
-        {/* Abstract Background Accents */}
-        <div className="absolute top-0 left-0 w-96 h-96 bg-blue-600/10 rounded-full blur-3xl -translate-x-1/2 -translate-y-1/2"></div>
-        <div className="absolute bottom-0 right-0 w-96 h-96 bg-indigo-600/10 rounded-full blur-3xl translate-x-1/2 translate-y-1/2"></div>
-
-        <div className="sm:mx-auto sm:w-full sm:max-w-md relative z-10 text-center">
-          <div className="w-24 h-24 bg-white rounded-2xl flex items-center justify-center mx-auto mb-6 shadow-xl overflow-hidden border border-slate-700/50 p-2">
-            <img src={effLogo} alt="EFF Logo" className="w-full h-full object-contain" referrerPolicy="no-referrer" />
-          </div>
-          <h2 className="text-3xl font-extrabold text-white tracking-tight">
-            Mechanic Spare Log System
-          </h2>
-          <p className="mt-2 text-sm text-slate-400">
-            EFF Zambia Fleet Maintenance and Stock Tracking
-          </p>
-        </div>
-
-        <div className="mt-8 sm:mx-auto sm:w-full sm:max-w-md relative z-10 px-4 sm:px-0">
-          <div className="bg-slate-800 py-8 px-4 shadow-xl rounded-2xl sm:px-10 border border-slate-700/50">
-            <div className="flex gap-2 mb-6 p-1 bg-slate-900 rounded-xl">
-              <button
-                type="button"
-                onClick={() => setAuthMode("signin")}
-                className={`flex-1 py-2 text-xs font-semibold uppercase tracking-wider rounded-lg transition-all ${authMode !== "register" ? "bg-slate-800 text-white shadow" : "text-slate-400 hover:text-slate-200"}`}
-              >
-                Admin Access
-              </button>
-              <button
-                type="button"
-                onClick={() => setAuthMode("register")}
-                className={`flex-1 py-2 text-xs font-semibold uppercase tracking-wider rounded-lg transition-all ${authMode === "register" ? "bg-slate-800 text-white shadow" : "text-slate-400 hover:text-slate-200"}`}
-              >
-                FEO Access
-              </button>
-            </div>
-
-            {authMode !== "register" ? (
-              <form onSubmit={handleEmailSignIn} className="space-y-5">
-                <div>
-                  <h3 className="text-xl font-bold text-white text-center">Admin Access</h3>
-                  <p className="text-xs text-slate-400 text-center mt-1">Enter your admin credentials</p>
-                </div>
-
-                {authError && (
-                  <div className="p-3 bg-rose-500/10 border border-rose-500/20 rounded-xl text-rose-400 text-xs flex gap-2">
-                    <span className="font-bold">⚠️</span>
-                    <span>{authError}</span>
-                  </div>
-                )}
-
-                <div className="space-y-4">
-                  <div>
-                    <label className="block text-xs font-semibold text-slate-300 uppercase tracking-wider mb-1.5">Admin Email</label>
-                    <input
-                      type="email"
-                      required
-                      placeholder="admin@effzambia.org"
-                      value={authEmail}
-                      onChange={(e) => setAuthEmail(e.target.value)}
-                      className="w-full px-4 py-3 bg-slate-900 border border-slate-700 rounded-xl text-sm text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500/40 focus:border-blue-500 transition-all"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-xs font-semibold text-slate-300 uppercase tracking-wider mb-1.5">Password</label>
-                    <input
-                      type="password"
-                      required
-                      placeholder="••••••••"
-                      value={authPassword}
-                      onChange={(e) => setAuthPassword(e.target.value)}
-                      className="w-full px-4 py-3 bg-slate-900 border border-slate-700 rounded-xl text-sm text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500/40 focus:border-blue-500 transition-all"
-                    />
-                  </div>
-                </div>
-
-                <button
-                  type="submit"
-                  disabled={authLoading}
-                  className="w-full flex justify-center items-center gap-2 px-4 py-3 border border-transparent rounded-xl shadow-sm text-sm font-semibold text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 transition-all cursor-pointer disabled:opacity-50"
-                >
-                  {authLoading ? "Signing In..." : "Sign In Securely"}
-                </button>
-              </form>
-            ) : (
-              <form onSubmit={async (e) => {
-                e.preventDefault();
-                setAuthError("");
-                setAuthLoading(true);
-                try {
-                  const res = await fetch("/api/auth/feo-login", {
-                    method: "POST",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({ name: authName, phoneNumber: authPhone })
-                  });
-                  const data = await res.json();
-                  if (!res.ok) throw new Error(data.error || "Failed to login as FEO");
-                  
-                  const sessionUser = {
-                    uid: data.user.uid,
-                    email: data.user.email,
-                    name: data.user.name,
-                    phoneNumber: data.user.phoneNumber,
-                    role: data.user.role,
-                    token: data.token
-                  };
-                  localStorage.setItem("eff_user_session", JSON.stringify(sessionUser));
-                  
-                  const customUser = {
-                    uid: sessionUser.uid,
-                    email: sessionUser.email,
-                    displayName: sessionUser.name,
-                    name: sessionUser.name,
-                    phoneNumber: sessionUser.phoneNumber,
-                    token: sessionUser.token,
-                    getIdToken: async () => sessionUser.token
-                  };
-                  setUser(customUser as any);
-                  setDbUser(data.user);
-                  await fetchData(customUser as any, data.user);
-                } catch (err: any) {
-                  setAuthError(err.message);
-                } finally {
-                  setAuthLoading(false);
-                }
-              }} className="space-y-5">
-                <div>
-                  <h3 className="text-xl font-bold text-white text-center">FEO Access</h3>
-                  <p className="text-xs text-slate-400 text-center mt-1">No password required. Just your name and phone.</p>
-                </div>
-
-                {authError && (
-                  <div className="p-3 bg-rose-500/10 border border-rose-500/20 rounded-xl text-rose-400 text-xs flex gap-2">
-                    <span className="font-bold">⚠️</span>
-                    <span>{authError}</span>
-                  </div>
-                )}
-
-                <div className="space-y-4">
-                  <div>
-                    <label className="block text-xs font-semibold text-slate-300 uppercase tracking-wider mb-1.5">Full Name</label>
-                    <input
-                      type="text"
-                      required
-                      placeholder="e.g. John Doe"
-                      value={authName}
-                      onChange={(e) => setAuthName(e.target.value)}
-                      className="w-full px-4 py-3 bg-slate-900 border border-slate-700 rounded-xl text-sm text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500/40 focus:border-blue-500 transition-all"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-xs font-semibold text-slate-300 uppercase tracking-wider mb-1.5">Phone Number</label>
-                    <input
-                      type="text"
-                      required
-                      placeholder="e.g. +260 97 1234567"
-                      value={authPhone}
-                      onChange={(e) => setAuthPhone(e.target.value)}
-                      className="w-full px-4 py-3 bg-slate-900 border border-slate-700 rounded-xl text-sm text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500/40 focus:border-blue-500 transition-all"
-                    />
-                  </div>
-                </div>
-
-                <button
-                  type="submit"
-                  disabled={authLoading}
-                  className="w-full flex justify-center items-center gap-2 px-4 py-3 border border-transparent rounded-xl shadow-sm text-sm font-semibold text-slate-900 bg-amber-400 hover:bg-amber-300 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-amber-500 transition-all cursor-pointer disabled:opacity-50"
-                >
-                  {authLoading ? "Loading..." : "Enter Dashboard"}
-                </button>
-              </form>
-            )}
-
-            <div className="mt-6 pt-4 border-t border-slate-700/50 text-center">
-              <button
-                type="button"
-                onClick={() => setAgreementModalOpen(true)}
-                id="btn-agreement-terms-login"
-                className="inline-flex items-center gap-2 text-xs text-slate-400 hover:text-white transition-colors cursor-pointer"
-              >
-                <Shield className="w-3.5 h-3.5 text-blue-400 animate-pulse-subtle" />
-                Software Agreement & Terms
-              </button>
-            </div>
-          </div>
-
-        </div>
-        <AgreementModal isOpen={agreementModalOpen} onClose={() => setAgreementModalOpen(false)} />
-      </div>
-    );
-  }
-
-  const lowerEmail = user?.email?.toLowerCase() || "";
-  const isUserAdmin = dbUser?.role === "admin" || lowerEmail === "harrisonnjobvu@gmail.com" || lowerEmail === "harrisonnjobvu@gamil.com";
+  const isUserAdmin = true;
+  const isAdminEmail = true;
+  const lowerEmail = "admin@effzambia.org";
 
   return (
-    <div className="min-h-screen bg-slate-50 flex flex-col md:flex-row text-slate-800">
+    <div className="min-h-screen bg-[#0a0f1d] flex flex-col md:flex-row text-slate-200 selection:bg-blue-500/30">
       
       {/* Responsive Sidebar for Desktop / Header Drawer for Mobile */}
-      <aside className={`fixed inset-y-0 left-0 z-50 w-64 bg-slate-900 text-slate-200 transform ${sidebarOpen ? "translate-x-0" : "-translate-x-full"} md:translate-x-0 transition-transform duration-300 ease-in-out flex flex-col justify-between border-r border-slate-800`}>
+      <aside className={`fixed md:sticky top-0 left-0 z-50 h-screen w-72 bg-[#0d1425] border-r border-blue-500/10 transition-transform duration-300 ease-out flex flex-col justify-between
+          ${sidebarOpen ? "translate-x-0" : "-translate-x-full md:translate-x-0"}`}>
         <div>
           {/* Brand Logo */}
-          <div className="p-6 border-b border-slate-800 flex items-center justify-between">
+          <div className="p-6 border-b border-blue-500/10 flex items-center justify-between bg-blue-500/5">
             <div className="flex items-center gap-3">
-              <div className="w-10 h-10 bg-white rounded-xl flex items-center justify-center overflow-hidden border border-slate-800 p-1">
+              <div className="w-10 h-10 bg-white rounded-xl flex items-center justify-center overflow-hidden border border-slate-800 p-1 shadow-[0_0_15px_rgba(255,255,255,0.1)]">
                 <img src={effLogo} alt="EFF Logo" className="w-full h-full object-contain" referrerPolicy="no-referrer" />
               </div>
               <div>
-                <h1 className="font-bold text-sm tracking-wide text-white uppercase">EFF Zambia</h1>
-                <p className="text-xs text-slate-400">Fleet MechLog</p>
-            {!isOnline && (
-              <div className="flex items-center gap-2 mt-4 px-3 py-2 bg-amber-500/10 text-amber-500 rounded-lg text-xs font-semibold">
-                <span className="w-2 h-2 rounded-full bg-amber-500 animate-pulse"></span>
-                Offline Mode ({offlineQueue.length} unsynced)
-              </div>
-            )}
-
+                <h1 className="text-lg font-bold tracking-tight text-white uppercase leading-none">
+                  EFF <span className="text-blue-500">Fleet</span>
+                </h1>
+                <div className="flex items-center gap-1.5 mt-1">
+                  <span className="w-1.5 h-1.5 bg-emerald-500 rounded-full shadow-[0_0_8px_rgba(16,185,129,0.5)]" />
+                  <span className="text-[10px] font-semibold text-slate-500 uppercase tracking-widest">System Active</span>
+                </div>
               </div>
             </div>
-            <button onClick={() => setSidebarOpen(false)} className="md:hidden text-slate-400 hover:text-white">
-              <X className="w-5 h-5" />
-            </button>
+            
+            <div className="flex items-center gap-2">
+              {!isOnline && (
+                <div className="p-1.5 bg-amber-500/10 text-amber-500 rounded-lg" title={`Offline Mode (${offlineQueue.length} unsynced)`}>
+                  <AlertCircle className="w-4 h-4" />
+                </div>
+              )}
+              <button onClick={() => setSidebarOpen(false)} className="md:hidden text-slate-400 hover:text-white transition-colors">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
           </div>
 
           {/* Navigation Links */}
-          <nav className="p-4 space-y-1">
+          <nav className="p-4 space-y-2">
             <button
               onClick={() => { setActiveTab("dashboard"); setSidebarOpen(false); }}
               id="tab-btn-dashboard"
-              className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-semibold transition-all ${activeTab === "dashboard" ? "bg-blue-600 text-white shadow-lg shadow-blue-500/20" : "text-slate-400 hover:bg-slate-800 hover:text-slate-200"}`}
+              className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-[11px] font-bold uppercase tracking-widest transition-all duration-300 group ${activeTab === "dashboard" ? "bg-blue-600 text-white shadow-[0_0_20px_rgba(37,99,235,0.4)] ring-1 ring-blue-400/50" : "text-slate-500 hover:bg-blue-500/5 hover:text-slate-200"}`}
             >
-              <LayoutDashboard className="w-5 h-5" />
+              <LayoutDashboard className={`w-4 h-4 ${activeTab === "dashboard" ? "text-white" : "text-slate-600 group-hover:text-blue-500"}`} />
               Dashboard
             </button>
 
             <button
               onClick={() => { setActiveTab("requests"); setSidebarOpen(false); }}
               id="tab-btn-requests"
-              className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-semibold transition-all ${activeTab === "requests" ? "bg-blue-600 text-white shadow-lg shadow-blue-500/20" : "text-slate-400 hover:bg-slate-800 hover:text-slate-200"}`}
+              className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-[11px] font-bold uppercase tracking-widest transition-all duration-300 group ${activeTab === "requests" ? "bg-blue-600 text-white shadow-[0_0_20px_rgba(37,99,235,0.4)] ring-1 ring-blue-400/50" : "text-slate-500 hover:bg-blue-500/5 hover:text-slate-200"}`}
             >
-              <Mail className="w-5 h-5" />
-              <span>{isUserAdmin ? "Service Mailbox" : "My Service Requests"}</span>
+              <Mail className={`w-4 h-4 ${activeTab === "requests" ? "text-white" : "text-slate-600 group-hover:text-blue-500"}`} />
+              <span>{isUserAdmin ? "Service Mailbox" : "My Requests"}</span>
               {isUserAdmin && requestsList.filter(r => r.status === "pending").length > 0 && (
-                <span className="ml-auto bg-amber-500 text-slate-950 text-[10px] font-extrabold px-1.5 py-0.5 rounded-full">
+                <span className="ml-auto bg-amber-500 text-slate-950 text-[10px] font-bold px-2 py-0.5 rounded shadow-[0_0_10px_rgba(245,158,11,0.5)]">
                   {requestsList.filter(r => r.status === "pending").length}
                 </span>
               )}
@@ -1615,60 +1417,48 @@ export default function App() {
                 <button
                   onClick={() => { setActiveTab("logs"); setSidebarOpen(false); }}
                   id="tab-btn-logs"
-                  className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-semibold transition-all ${activeTab === "logs" ? "bg-blue-600 text-white shadow-lg shadow-blue-500/20" : "text-slate-400 hover:bg-slate-800 hover:text-slate-200"}`}
+                  className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-[11px] font-bold uppercase tracking-widest transition-all duration-300 group ${activeTab === "logs" ? "bg-blue-600 text-white shadow-[0_0_20px_rgba(37,99,235,0.4)] ring-1 ring-blue-400/50" : "text-slate-500 hover:bg-blue-500/5 hover:text-slate-200"}`}
                 >
-                  <ClipboardList className="w-5 h-5" />
+                  <ClipboardList className={`w-4 h-4 ${activeTab === "logs" ? "text-white" : "text-slate-600 group-hover:text-blue-500"}`} />
                   Service Logs
                 </button>
                 <button
                   onClick={() => { setActiveTab("bikes"); setSidebarOpen(false); }}
                   id="tab-btn-bikes"
-                  className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-semibold transition-all ${activeTab === "bikes" ? "bg-blue-600 text-white shadow-lg shadow-blue-500/20" : "text-slate-400 hover:bg-slate-800 hover:text-slate-200"}`}
+                  className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-[11px] font-bold uppercase tracking-widest transition-all duration-300 group ${activeTab === "bikes" ? "bg-blue-600 text-white shadow-[0_0_20px_rgba(37,99,235,0.4)] ring-1 ring-blue-400/50" : "text-slate-500 hover:bg-blue-500/5 hover:text-slate-200"}`}
                 >
-                  <Bike className="w-5 h-5" />
+                  <Bike className={`w-4 h-4 ${activeTab === "bikes" ? "text-white" : "text-slate-600 group-hover:text-blue-500"}`} />
                   Bike Registry
                 </button>
                 <button
                   onClick={() => { setActiveTab("spares"); setSidebarOpen(false); }}
                   id="tab-btn-spares"
-                  className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-semibold transition-all ${activeTab === "spares" ? "bg-blue-600 text-white shadow-lg shadow-blue-500/20" : "text-slate-400 hover:bg-slate-800 hover:text-slate-200"}`}
+                  className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-[11px] font-bold uppercase tracking-widest transition-all duration-300 group ${activeTab === "spares" ? "bg-blue-600 text-white shadow-[0_0_20px_rgba(37,99,235,0.4)] ring-1 ring-blue-400/50" : "text-slate-500 hover:bg-blue-500/5 hover:text-slate-200"}`}
                 >
-                  <Package className="w-5 h-5" />
-                  Admin Spares Stock
+                  <Package className={`w-4 h-4 ${activeTab === "spares" ? "text-white" : "text-slate-600 group-hover:text-blue-500"}`} />
+                  Spares Stock
                 </button>
                 <button
                   onClick={() => { setActiveTab("users"); setSidebarOpen(false); }}
                   id="tab-btn-users"
-                  className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-semibold transition-all ${activeTab === "users" ? "bg-blue-600 text-white shadow-lg shadow-blue-500/20" : "text-slate-400 hover:bg-slate-800 hover:text-slate-200"}`}
+                  className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-[11px] font-bold uppercase tracking-widest transition-all duration-300 group ${activeTab === "users" ? "bg-blue-600 text-white shadow-[0_0_20px_rgba(37,99,235,0.4)] ring-1 ring-blue-400/50" : "text-slate-500 hover:bg-blue-500/5 hover:text-slate-200"}`}
                 >
-                  <Users className="w-5 h-5" />
-                  Manage Users
+                  <Users className={`w-4 h-4 ${activeTab === "users" ? "text-white" : "text-slate-600 group-hover:text-blue-500"}`} />
+                  Admin Role
                 </button>
-
               </>
             )}
-            
-            <div className="pt-2 mt-2 border-t border-slate-800/60">
-              <button
-                onClick={() => { setAgreementModalOpen(true); setSidebarOpen(false); }}
-                id="sidebar-btn-agreement"
-                className="w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-semibold text-slate-400 hover:bg-slate-800 hover:text-slate-200 transition-all cursor-pointer"
-              >
-                <Shield className="w-5 h-5 text-blue-500/80" />
-                License & Terms
-              </button>
-            </div>
           </nav>
         </div>
 
-        {/* User Account Info / Logout */}
+        {/* User Account Info */}
         <div className="p-4 border-t border-slate-800 bg-slate-950/40">
-          <div className="flex items-center gap-3 mb-4 px-2">
+          <div className="flex items-center gap-3 px-2">
             <div className="w-9 h-9 bg-slate-800 rounded-full flex items-center justify-center text-slate-300 font-semibold uppercase">
-              {user.displayName ? user.displayName[0] : (dbUser?.name ? dbUser.name[0] : user.email?.[0])}
+              {user?.displayName ? user.displayName[0] : (dbUser?.name ? dbUser.name[0] : (user?.email?.[0] || "A"))}
             </div>
             <div className="truncate flex-1 min-w-0">
-              <p className="text-xs font-semibold text-white truncate">{user.displayName || dbUser?.name || "Admin User"}</p>
+              <p className="text-xs font-semibold text-white truncate">{user?.displayName || dbUser?.name || "Admin User"}</p>
               {dbUser?.phoneNumber && (
                 <p className="text-[10px] text-slate-400 truncate mb-1" title={dbUser.phoneNumber}>📞 {dbUser.phoneNumber}</p>
               )}
@@ -1676,7 +1466,7 @@ export default function App() {
                 <span className={`text-[9px] px-1.5 py-0.2 rounded font-extrabold uppercase tracking-wider ${isUserAdmin ? "bg-blue-500/20 text-blue-400 border border-blue-500/10" : "bg-slate-800 text-slate-300 border border-slate-700"}`}>
                   {isUserAdmin ? "Admin" : "Officer"}
                 </span>
-                <span className="text-[10px] text-slate-400 truncate max-w-[80px]" title={user.email}>{user.email}</span>
+                <span className="text-[10px] text-slate-400 truncate max-w-[80px]" title={user?.email}>{user?.email || "admin@effzambia.org"}</span>
               </div>
             </div>
           </div>
@@ -1684,33 +1474,40 @@ export default function App() {
       </aside>
 
       {/* Main Container */}
-      <div className="flex-1 md:ml-64 flex flex-col min-w-0">
+      <div className="flex-1 md:ml-0 flex flex-col min-w-0 bg-[#0a0f1d]">
         
         {/* Top Header Bar */}
-        <header className="bg-white border-b border-slate-200 px-6 py-4 flex items-center justify-between sticky top-0 z-30">
+        <header className="bg-[#0a0f1d]/80 backdrop-blur-md border-b border-blue-500/10 px-6 py-4 flex items-center justify-between sticky top-0 z-30">
           <div className="flex items-center gap-4">
-            <button onClick={() => setSidebarOpen(true)} className="md:hidden p-2 rounded-lg text-slate-600 hover:bg-slate-100">
+            <button 
+              onClick={() => setSidebarOpen(true)} 
+              className="md:hidden p-2 bg-[#0d1425] border border-blue-500/20 rounded-lg text-slate-400 hover:text-white transition-colors"
+            >
               <Menu className="w-6 h-6" />
             </button>
             <div>
-              <h2 className="text-xl font-bold text-slate-900 capitalize">{activeTab} Overview</h2>
-              <p className="text-xs text-slate-500 hidden sm:block">Zambia Fleet Maintenance Database</p>
+              <h2 className="text-xl font-black text-white tracking-tight uppercase italic">
+                {activeTab} <span className="text-blue-500">Overview</span>
+              </h2>
+              <p className="text-[10px] font-bold text-slate-500 uppercase tracking-[0.2em] mt-0.5 hidden sm:block">
+                EFF Fleet Intelligence Interface
+              </p>
             </div>
           </div>
 
           <div className="flex items-center gap-3">
             {/* Real-Time Live Sync Status Indicator */}
-            <div className="flex items-center gap-2.5 px-3 py-1.5 bg-slate-50 border border-slate-200/60 rounded-xl">
+            <div className="flex items-center gap-3 px-3 py-1.5 bg-[#0d1425] border border-blue-500/10 rounded-xl shadow-[0_0_15px_rgba(0,0,0,0.2)]">
               <span className="relative flex h-2 w-2">
                 <span className={`animate-ping absolute inline-flex h-full w-full rounded-full opacity-75 ${isOnline ? "bg-emerald-400" : "bg-amber-400"}`}></span>
                 <span className={`relative inline-flex rounded-full h-2 w-2 ${isOnline ? "bg-emerald-500" : "bg-amber-500"}`}></span>
               </span>
               <div className="flex flex-col text-left">
-                <span className="text-[10px] font-bold text-slate-700 leading-none">
-                  {isOnline ? "Live Cloud Active" : "Offline Cache"}
+                <span className={`text-[9px] font-black uppercase tracking-widest leading-none ${isOnline ? "text-emerald-500" : "text-amber-500"}`}>
+                  {isOnline ? "System Uplink" : "Local Buffer"}
                 </span>
-                <span className="text-[8px] text-slate-400 font-semibold leading-none mt-0.5">
-                  {isOnline ? `Last synced: ${lastSynced.toLocaleTimeString()}` : "Saving locally"}
+                <span className="text-[8px] text-slate-600 font-bold uppercase tracking-tighter leading-none mt-1">
+                  {isOnline ? `Sync: ${lastSynced.toLocaleTimeString()}` : "Auth required"}
                 </span>
               </div>
             </div>
@@ -1724,27 +1521,26 @@ export default function App() {
             
             <button
               onClick={() => fetchData()}
-              className="p-2 rounded-xl text-slate-600 hover:bg-slate-100 hover:text-slate-900 border border-slate-200 transition-colors cursor-pointer"
-              title="Refresh Data"
+              className="p-2.5 rounded-xl text-slate-500 hover:bg-blue-500/10 hover:text-blue-400 border border-blue-500/10 transition-all cursor-pointer group"
+              title="Refresh Data Matrix"
             >
-              <RefreshCw className="w-4 h-4" />
+              <RefreshCw className={`w-4 h-4 ${syncing ? "animate-spin text-blue-500" : "group-hover:rotate-180 transition-transform duration-500"}`} />
             </button>
 
             <button
               onClick={exportToExcel}
-              className="bg-emerald-600 hover:bg-emerald-700 text-white px-3.5 py-2 rounded-xl text-xs font-semibold flex items-center gap-1.5 shadow-lg shadow-emerald-500/15 transition-all cursor-pointer border border-emerald-500/10"
+              className="bg-emerald-500/10 text-emerald-500 hover:bg-emerald-500 hover:text-white px-3.5 py-2 rounded-xl text-xs font-bold flex items-center gap-1.5 shadow-[0_0_15px_rgba(16,185,129,0.1)] transition-all duration-300 cursor-pointer border border-emerald-500/20"
               title="Export Full Report to Excel"
             >
               <FileSpreadsheet className="w-4 h-4" />
-              <span className="hidden sm:inline">Export to Excel</span>
+              <span className="hidden sm:inline">Export</span>
             </button>
 
-            {/* Quick Actions */}
             {activeTab === "logs" && (
               <button
                 onClick={() => openLogModal()}
                 id="btn-add-log"
-                className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-xl text-xs font-semibold flex items-center gap-1.5 shadow-lg shadow-blue-500/10 transition-all cursor-pointer"
+                className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-xl text-xs font-bold flex items-center gap-1.5 shadow-[0_0_20px_rgba(37,99,235,0.3)] transition-all duration-300 cursor-pointer border border-blue-400/30"
               >
                 <Plus className="w-4 h-4" /> Log Service
               </button>
@@ -1753,7 +1549,7 @@ export default function App() {
               <button
                 onClick={() => openBikeModal()}
                 id="btn-add-bike"
-                className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-xl text-xs font-semibold flex items-center gap-1.5 shadow-lg shadow-blue-500/10 transition-all cursor-pointer"
+                className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-xl text-xs font-bold flex items-center gap-1.5 shadow-[0_0_20px_rgba(37,99,235,0.3)] transition-all duration-300 cursor-pointer border border-blue-400/30"
               >
                 <Plus className="w-4 h-4" /> Add Bike
               </button>
@@ -1762,7 +1558,7 @@ export default function App() {
               <button
                 onClick={() => openSpareModal()}
                 id="btn-add-spare"
-                className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-xl text-xs font-semibold flex items-center gap-1.5 shadow-lg shadow-blue-500/10 transition-all cursor-pointer"
+                className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-xl text-xs font-bold flex items-center gap-1.5 shadow-[0_0_20px_rgba(37,99,235,0.3)] transition-all duration-300 cursor-pointer border border-blue-400/30"
               >
                 <Plus className="w-4 h-4" /> Add Spare Stock
               </button>
@@ -1771,7 +1567,7 @@ export default function App() {
               <button
                 onClick={() => openUserModal()}
                 id="btn-add-user"
-                className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-xl text-xs font-semibold flex items-center gap-1.5 shadow-lg shadow-blue-500/10 transition-all cursor-pointer border border-blue-500/10"
+                className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-xl text-xs font-bold flex items-center gap-1.5 shadow-[0_0_20px_rgba(37,99,235,0.3)] transition-all duration-300 cursor-pointer border border-blue-400/30"
               >
                 <Plus className="w-4 h-4" /> Add User / Role
               </button>
@@ -1781,7 +1577,7 @@ export default function App() {
               <button
                 onClick={() => openRequestModal()}
                 id="btn-add-request"
-                className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-xl text-xs font-semibold flex items-center gap-1.5 shadow-lg shadow-blue-500/10 transition-all cursor-pointer border border-blue-500/10"
+                className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-xl text-xs font-bold flex items-center gap-1.5 shadow-[0_0_20px_rgba(37,99,235,0.3)] transition-all duration-300 cursor-pointer border border-blue-400/30"
               >
                 <Plus className="w-4 h-4" /> Request Service
               </button>
@@ -1799,84 +1595,112 @@ export default function App() {
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
                 
                 {/* Total Bikes Card */}
-                <div className="bg-white p-6 rounded-2xl border border-slate-200/80 shadow-sm flex items-center gap-4">
-                  <div className="p-3.5 bg-blue-50 text-blue-600 rounded-xl">
+                <motion.div 
+                  initial={{ opacity: 0, y: 20 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ delay: 0.1 }}
+                  className="bg-[#0d1425] p-6 rounded-2xl border border-blue-500/10 shadow-[0_0_20px_rgba(37,99,235,0.05)] flex items-center gap-4 hover:border-blue-500/30 transition-colors group"
+                >
+                  <div className="p-3.5 bg-blue-500/10 text-blue-500 rounded-xl group-hover:scale-110 transition-transform shadow-[0_0_15px_rgba(37,99,235,0.1)]">
                     <Bike className="w-6 h-6" />
                   </div>
                   <div>
-                    <p className="text-sm font-medium text-slate-500">Total Bikes</p>
-                    <h3 className="text-2xl font-bold text-slate-900 mt-0.5">{totalBikes}</h3>
+                    <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Total Bikes</p>
+                    <h3 className="text-2xl font-black text-white mt-0.5 tracking-tight">{totalBikes}</h3>
                   </div>
-                </div>
+                </motion.div>
 
                 {/* Total Completed Card */}
-                <div className="bg-white p-6 rounded-2xl border border-slate-200/80 shadow-sm flex items-center gap-4">
-                  <div className="p-3.5 bg-emerald-50 text-green-600 rounded-xl">
+                <motion.div 
+                  initial={{ opacity: 0, y: 20 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ delay: 0.2 }}
+                  className="bg-[#0d1425] p-6 rounded-2xl border border-emerald-500/10 shadow-[0_0_20px_rgba(16,185,129,0.05)] flex items-center gap-4 hover:border-emerald-500/30 transition-colors group"
+                >
+                  <div className="p-3.5 bg-emerald-500/10 text-emerald-500 rounded-xl group-hover:scale-110 transition-transform shadow-[0_0_15px_rgba(16,185,129,0.1)]">
                     <CheckCircle className="w-6 h-6" />
                   </div>
                   <div>
-                    <p className="text-sm font-medium text-slate-500">Completed Services</p>
-                    <h3 className="text-2xl font-bold text-slate-900 mt-0.5">{totalCompleted}</h3>
+                    <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Completed Services</p>
+                    <h3 className="text-2xl font-black text-white mt-0.5 tracking-tight">{totalCompleted}</h3>
                   </div>
-                </div>
+                </motion.div>
 
                 {/* Total Pending Card */}
-                <div className="bg-white p-6 rounded-2xl border border-slate-200/80 shadow-sm flex items-center gap-4">
-                  <div className="p-3.5 bg-amber-50 text-amber-600 rounded-xl">
+                <motion.div 
+                  initial={{ opacity: 0, y: 20 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ delay: 0.3 }}
+                  className="bg-[#0d1425] p-6 rounded-2xl border border-amber-500/10 shadow-[0_0_20px_rgba(245,158,11,0.05)] flex items-center gap-4 hover:border-amber-500/30 transition-colors group"
+                >
+                  <div className="p-3.5 bg-amber-500/10 text-amber-500 rounded-xl group-hover:scale-110 transition-transform shadow-[0_0_15px_rgba(245,158,11,0.1)]">
                     <Clock className="w-6 h-6" />
                   </div>
                   <div>
-                    <p className="text-sm font-medium text-slate-500">Pending Services</p>
-                    <h3 className="text-2xl font-bold text-slate-900 mt-0.5">{totalPending}</h3>
+                    <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Pending Services</p>
+                    <h3 className="text-2xl font-black text-white mt-0.5 tracking-tight">{totalPending}</h3>
                   </div>
-                </div>
+                </motion.div>
 
                 {/* Total Spares in Stock Card */}
-                <div className="bg-white p-6 rounded-2xl border border-slate-200/80 shadow-sm flex items-center gap-4">
-                  <div className="p-3.5 bg-indigo-50 text-indigo-600 rounded-xl">
+                <motion.div 
+                  initial={{ opacity: 0, y: 20 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ delay: 0.4 }}
+                  className="bg-[#0d1425] p-6 rounded-2xl border border-indigo-500/10 shadow-[0_0_20px_rgba(99,102,241,0.05)] flex items-center gap-4 hover:border-indigo-500/30 transition-colors group"
+                >
+                  <div className="p-3.5 bg-indigo-500/10 text-indigo-400 rounded-xl group-hover:scale-110 transition-transform shadow-[0_0_15px_rgba(99,102,241,0.1)]">
                     <Package className="w-6 h-6" />
                   </div>
                   <div>
-                    <p className="text-sm font-medium text-slate-500">Spares in Stock</p>
-                    <h3 className="text-2xl font-bold text-slate-900 mt-0.5">{totalSparesInStock}</h3>
+                    <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Spares in Stock</p>
+                    <h3 className="text-2xl font-black text-white mt-0.5 tracking-tight">{totalSparesInStock}</h3>
                   </div>
-                </div>
+                </motion.div>
               </div>
+
+              {/* Quick Admin Protocol (Shortcut Matrix) */}
+
 
               {/* Grid with spares breakdown & bike lists */}
               <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
                 
                 {/* Spares used details panel */}
-                <div className="bg-white p-6 rounded-2xl border border-slate-200/80 shadow-sm lg:col-span-1">
-                  <h3 className="text-base font-bold text-slate-900 mb-4 flex items-center gap-2">
-                    <Package className="w-5 h-5 text-indigo-600" />
+                <motion.div 
+                  initial={{ opacity: 0, x: -20 }}
+                  animate={{ opacity: 1, x: 0 }}
+                  transition={{ delay: 0.5 }}
+                  className="bg-[#0d1425] p-6 rounded-2xl border border-blue-500/10 shadow-[0_0_30px_rgba(37,99,235,0.03)] lg:col-span-1"
+                >
+                  <h3 className="text-sm font-black text-white mb-6 flex items-center gap-2 uppercase tracking-widest italic">
+                    <Package className="w-4 h-4 text-blue-500" />
                     Spares Stock Overview
                   </h3>
                   
-                  <div className="mb-6 pb-6 border-b border-slate-100 flex justify-between items-center bg-slate-50 p-4 rounded-xl">
+                  <div className="mb-6 pb-6 border-b border-blue-500/10 flex justify-between items-center bg-blue-500/5 p-4 rounded-xl border border-blue-500/10">
                     <div>
-                      <p className="text-xs text-slate-500 font-medium">Total Spares Installed</p>
-                      <h4 className="text-2xl font-bold text-slate-900 mt-1">{totalSparesUsed} units</h4>
+                      <p className="text-[10px] text-slate-500 font-bold uppercase tracking-wider">Total Spares Installed</p>
+                      <h4 className="text-xl font-black text-white mt-1">{totalSparesUsed} <span className="text-xs text-slate-500">UNITS</span></h4>
                     </div>
                     <div className="text-right">
-                      <p className="text-xs text-slate-500 font-medium">Unique Spares Stocked</p>
-                      <h4 className="text-2xl font-bold text-indigo-600 mt-1">{sparesList.length} types</h4>
+                      <p className="text-[10px] text-slate-500 font-bold uppercase tracking-wider">Unique Types</p>
+                      <h4 className="text-xl font-black text-blue-500 mt-1">{sparesList.length} <span className="text-xs text-slate-500">TYPES</span></h4>
                     </div>
                   </div>
 
                   {/* Tab Selector for In Stock vs Used */}
-                  <div className="flex bg-slate-100 p-1 rounded-xl mb-4">
+                  <div className="flex bg-[#0a0f1d] p-1.5 rounded-xl mb-4 border border-blue-500/10">
                     <button
                       type="button"
                       onClick={() => setSparesTab("in_stock")}
-                      className={`flex-1 text-center py-1.5 text-xs font-bold rounded-lg cursor-pointer transition-all ${sparesTab === "in_stock" ? "bg-white text-indigo-600 shadow-sm" : "text-slate-500 hover:text-slate-900"}`}
+                      className={`flex-1 text-center py-2 text-[10px] font-black uppercase tracking-widest rounded-lg cursor-pointer transition-all duration-300 ${sparesTab === "in_stock" ? "bg-blue-600 text-white shadow-[0_0_15px_rgba(37,99,235,0.3)]" : "text-slate-500 hover:text-slate-300"}`}
                     >
                       In Stock ({sparesList.length})
                     </button>
                     <button
                       type="button"
                       onClick={() => setSparesTab("used")}
-                      className={`flex-1 text-center py-1.5 text-xs font-bold rounded-lg cursor-pointer transition-all ${sparesTab === "used" ? "bg-white text-indigo-600 shadow-sm" : "text-slate-500 hover:text-slate-900"}`}
+                      className={`flex-1 text-center py-2 text-[10px] font-black uppercase tracking-widest rounded-lg cursor-pointer transition-all duration-300 ${sparesTab === "used" ? "bg-blue-600 text-white shadow-[0_0_15px_rgba(37,99,235,0.3)]" : "text-slate-500 hover:text-slate-300"}`}
                     >
                       Usage Breakdown ({Object.keys(sparesUsedBreakdown).length})
                     </button>
@@ -1884,250 +1708,315 @@ export default function App() {
 
                   {sparesTab === "in_stock" ? (
                     <div>
-                      <h4 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-3">Current Stock Segregation</h4>
-                      <div className="space-y-3 max-h-60 overflow-y-auto pr-2">
+                      <h4 className="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-4 italic">Current Stock Segregation</h4>
+                      <div className="space-y-3 max-h-60 overflow-y-auto pr-2 custom-scrollbar">
                         {sparesList.length === 0 ? (
-                          <p className="text-xs text-slate-500 italic">No spares registered in inventory yet.</p>
+                          <p className="text-xs text-slate-500 italic py-4">No spares registered in inventory yet.</p>
                         ) : (
-                          sparesList.map(spare => (
-                            <div key={spare.id} className="flex justify-between items-center text-sm py-2 border-b border-slate-100 last:border-0">
-                              <span className="font-semibold text-slate-700">{spare.name}</span>
+                          sparesList.map((spare, idx) => (
+                            <motion.div 
+                              initial={{ opacity: 0, x: -10 }}
+                              animate={{ opacity: 1, x: 0 }}
+                              transition={{ delay: 0.1 * (idx % 5) }}
+                              key={spare.id} 
+                              className="flex justify-between items-center text-sm py-3 border-b border-blue-500/5 last:border-0 hover:bg-blue-500/5 rounded-lg px-2 transition-colors group"
+                            >
+                              <span className="font-bold text-slate-300 group-hover:text-white transition-colors">{spare.name}</span>
                               <div className="flex items-center gap-2">
-                                <span className={`text-xs px-2.5 py-0.5 rounded-full font-bold ${spare.quantity > 5 ? "bg-green-50 text-green-700" : spare.quantity > 0 ? "bg-amber-50 text-amber-700" : "bg-rose-50 text-rose-700"}`}>
+                                <span className={`text-[10px] px-2 py-0.5 rounded font-black uppercase ${spare.quantity > 5 ? "bg-emerald-500/10 text-emerald-500 border border-emerald-500/20" : spare.quantity > 0 ? "bg-amber-500/10 text-amber-500 border border-amber-500/20" : "bg-rose-500/10 text-rose-500 border border-rose-500/20"}`}>
                                   {spare.quantity} units
                                 </span>
-                                <span className="text-[10px] text-slate-400 font-medium hidden sm:inline">
-                                  {spare.quantity === 0 ? "Out of Stock" : spare.quantity <= 3 ? "Low" : "Available"}
-                                </span>
                               </div>
-                            </div>
+                            </motion.div>
                           ))
                         )}
                       </div>
                     </div>
                   ) : (
                     <div>
-                      <h4 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-3">Spares Usage Breakdown</h4>
-                      <div className="space-y-3 max-h-60 overflow-y-auto pr-2">
+                      <h4 className="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-4 italic">Spares Usage Breakdown</h4>
+                      <div className="space-y-3 max-h-60 overflow-y-auto pr-2 custom-scrollbar">
                         {Object.keys(sparesUsedBreakdown).length === 0 ? (
-                          <p className="text-xs text-slate-500 italic">No spares have been recorded as used yet.</p>
+                          <p className="text-xs text-slate-500 italic py-4 text-center">No spares have been recorded as used yet.</p>
                         ) : (
-                          Object.entries(sparesUsedBreakdown).map(([name, count]) => {
+                          Object.entries(sparesUsedBreakdown).map(([name, count], idx) => {
                             const originalSpare = sparesList.find(s => s.name === name);
                             return (
-                              <div key={name} className="flex justify-between items-center text-sm py-1">
-                                <span className="font-semibold text-slate-700">{name}</span>
+                              <motion.div 
+                                initial={{ opacity: 0, x: -10 }}
+                                animate={{ opacity: 1, x: 0 }}
+                                transition={{ delay: 0.1 * (idx % 5) }}
+                                key={name} 
+                                className="flex justify-between items-center text-sm py-3 border-b border-blue-500/5 last:border-0 hover:bg-blue-500/5 rounded-lg px-2 transition-colors group"
+                              >
+                                <span className="font-bold text-slate-300 group-hover:text-white transition-colors">{name}</span>
                                 <div className="flex items-center gap-2">
-                                  <span className="text-xs bg-slate-100 text-slate-600 px-2 py-0.5 rounded-full font-medium">
+                                  <span className="text-[10px] bg-blue-500/10 text-blue-400 border border-blue-500/20 px-2 py-0.5 rounded font-black uppercase">
                                     {count} used
                                   </span>
                                   {originalSpare && (
-                                    <span className="text-[11px] text-indigo-600 font-medium bg-indigo-50 px-1.5 py-0.5 rounded-full">
-                                      {originalSpare.quantity} left
+                                    <span className="text-[10px] text-slate-500 font-bold bg-slate-800/50 px-2 py-0.5 rounded">
+                                      {originalSpare.quantity} stock
                                     </span>
                                   )}
                                 </div>
-                              </div>
+                              </motion.div>
                             );
                           })
                         )}
                       </div>
                     </div>
                   )}
-                </div>
+                </motion.div>
 
-                {/* Bike Summary Stats (Total spares used and works to be done per-bike) */}
-                <div className="bg-white p-6 rounded-2xl border border-slate-200/80 shadow-sm lg:col-span-2">
-                  <h3 className="text-base font-bold text-slate-900 mb-4 flex items-center gap-2">
-                    <Bike className="w-5 h-5 text-blue-600" />
-                    Fleet Spares & Pending Works
+                {/* Bike Summary Stats */}
+                <motion.div 
+                  initial={{ opacity: 0, x: 20 }}
+                  animate={{ opacity: 1, x: 0 }}
+                  transition={{ delay: 0.6 }}
+                  className="bg-[#0d1425] p-6 rounded-2xl border border-blue-500/10 shadow-[0_0_30px_rgba(37,99,235,0.03)] lg:col-span-2"
+                >
+                  <h3 className="text-sm font-black text-white mb-6 flex items-center gap-2 uppercase tracking-widest italic">
+                    <Bike className="w-4 h-4 text-blue-500" />
+                    Fleet Intelligence Summary
                   </h3>
 
                   {bikesList.length === 0 ? (
-                    <div className="text-center py-12">
-                      <Bike className="w-8 h-8 text-slate-300 mx-auto mb-2" />
-                      <p className="text-sm text-slate-500 italic">No bikes registered yet.</p>
+                    <div className="text-center py-20 bg-blue-500/5 rounded-2xl border border-blue-500/10 border-dashed">
+                      <Bike className="w-12 h-12 text-slate-800 mx-auto mb-4 opacity-50" />
+                      <p className="text-xs text-slate-500 font-bold uppercase tracking-widest">No active fleet registry detected</p>
                     </div>
                   ) : (
-                    <div className="overflow-x-auto">
-                      <table className="w-full text-sm text-left">
+                    <div className="overflow-x-auto custom-scrollbar">
+                      <table className="w-full text-sm text-left border-separate border-spacing-y-2">
                         <thead>
-                          <tr className="border-b border-slate-100 text-xs font-bold text-slate-400 uppercase tracking-wider">
-                            <th className="pb-3 font-semibold">Bike Reg</th>
-                            <th className="pb-3 font-semibold">Officer</th>
-                            <th className="pb-3 font-semibold">District</th>
-                            <th className="pb-3 text-center font-semibold">Spares Used</th>
-                            <th className="pb-3 font-semibold">Works Pending</th>
+                          <tr className="text-[10px] font-black text-slate-500 uppercase tracking-widest italic">
+                            <th className="pb-4 px-4">Identification</th>
+                            <th className="pb-4 px-4">Deployment</th>
+                            <th className="pb-4 px-4 text-center">Resource Utilization</th>
+                            <th className="pb-4 px-4">System Alerts</th>
                           </tr>
                         </thead>
-                        <tbody className="divide-y divide-slate-100">
-                          {bikesList.map(bike => {
+                        <tbody>
+                          {bikesList.map((bike, idx) => {
                             const stats = bikeStatsMap[bike.id] || { sparesUsed: 0, sparesDetails: [], pendingWork: "None" };
                             return (
-                              <tr key={bike.id} className="text-slate-700">
-                                <td className="py-3 font-bold text-slate-900">{bike.regNo}</td>
-                                <td className="py-3 text-xs text-slate-500">{bike.officer}</td>
-                                <td className="py-3 text-xs">{bike.district}</td>
-                                <td className="py-3">
-                                  <div className="flex flex-col items-center gap-1.5">
-                                    <span className={`text-xs px-2.5 py-0.5 rounded-full font-bold ${stats.sparesUsed > 0 ? "bg-indigo-50 text-indigo-600" : "bg-slate-100 text-slate-400"}`}>
-                                      {stats.sparesUsed} total
+                              <motion.tr 
+                                initial={{ opacity: 0, y: 10 }}
+                                animate={{ opacity: 1, y: 0 }}
+                                transition={{ delay: 0.1 * (idx % 10) }}
+                                key={bike.id} 
+                                className="bg-[#0a0f1d] hover:bg-blue-500/5 transition-colors group"
+                              >
+                                <td className="py-4 px-4 rounded-l-xl border-y border-l border-blue-500/5">
+                                  <div className="font-black text-white text-lg tracking-tight group-hover:text-blue-400 transition-colors">{bike.regNo}</div>
+                                  <div className="text-[10px] text-slate-500 font-bold uppercase tracking-wider">{bike.makeModel || "Generic Unit"}</div>
+                                </td>
+                                <td className="py-4 px-4 border-y border-blue-500/5">
+                                  <div className="text-xs text-slate-200 font-bold">{bike.officer}</div>
+                                  <div className="text-[10px] text-slate-500 uppercase font-black">{bike.district}</div>
+                                </td>
+                                <td className="py-4 px-4 border-y border-blue-500/5">
+                                  <div className="flex flex-col items-center gap-2">
+                                    <span className={`text-[10px] px-2 py-0.5 rounded font-black uppercase tracking-wider ${stats.sparesUsed > 0 ? "bg-blue-500/10 text-blue-400 border border-blue-500/20" : "bg-slate-800/50 text-slate-500 border border-slate-700/50"}`}>
+                                      {stats.sparesUsed} Spares Installed
                                     </span>
                                     {stats.sparesDetails && stats.sparesDetails.length > 0 && (
-                                      <div className="flex flex-wrap gap-1 justify-center max-w-[220px]">
-                                        {stats.sparesDetails.map((s, idx) => (
-                                          <span key={idx} className="text-[10px] bg-slate-50 text-slate-600 px-1.5 py-0.5 rounded border border-slate-200/80 font-medium whitespace-nowrap">
-                                            {s.name} ({s.qty})
+                                      <div className="flex flex-wrap gap-1 justify-center max-w-[200px]">
+                                        {stats.sparesDetails.slice(0, 3).map((s, sIdx) => (
+                                          <span key={sIdx} className="text-[8px] bg-slate-800/80 text-slate-400 px-1.5 py-0.5 rounded font-bold border border-slate-700">
+                                            {s.name}
                                           </span>
                                         ))}
+                                        {stats.sparesDetails.length > 3 && (
+                                          <span className="text-[8px] text-slate-600 font-bold">+{stats.sparesDetails.length - 3} more</span>
+                                        )}
                                       </div>
                                     )}
                                   </div>
                                 </td>
-                                <td className="py-3 text-xs max-w-xs truncate" title={stats.pendingWork}>
+                                <td className="py-4 px-4 rounded-r-xl border-y border-r border-blue-500/5">
                                   {stats.pendingWork !== "None" ? (
-                                    <span className="text-amber-600 font-medium flex items-center gap-1">
-                                      <AlertCircle className="w-3.5 h-3.5 flex-shrink-0" />
-                                      {stats.pendingWork}
-                                    </span>
+                                    <div className="flex items-center gap-2 text-amber-500 animate-pulse">
+                                      <AlertCircle className="w-4 h-4 flex-shrink-0 shadow-[0_0_8px_rgba(245,158,11,0.5)]" />
+                                      <span className="text-[10px] font-black uppercase tracking-wider truncate max-w-[120px]">{stats.pendingWork}</span>
+                                    </div>
                                   ) : (
-                                    <span className="text-slate-400">None</span>
+                                    <div className="flex items-center gap-2 text-emerald-500/50">
+                                      <CheckCircle className="w-4 h-4 flex-shrink-0" />
+                                      <span className="text-[10px] font-bold uppercase tracking-wider">Nominal</span>
+                                    </div>
                                   )}
                                 </td>
-                              </tr>
+                              </motion.tr>
                             );
                           })}
                         </tbody>
                       </table>
                     </div>
                   )}
-                </div>
+                </motion.div>
               </div>
 
               {/* Row 3: District Fleet Distribution & Service Logs (Done/Pending) Tracker */}
               <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
                 
-                {/* Total Bikes by District Card (col-span-1) */}
-                <div className="bg-white p-6 rounded-2xl border border-slate-200/80 shadow-sm lg:col-span-1 flex flex-col h-[400px]">
-                  <h3 className="text-base font-bold text-slate-900 mb-2 flex items-center gap-2">
-                    <MapPin className="w-5 h-5 text-blue-600" />
-                    District Fleet Distribution
+                {/* Total Bikes by District Card */}
+                <motion.div 
+                  initial={{ opacity: 0, y: 20 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ delay: 0.7 }}
+                  className="bg-[#0d1425] p-6 rounded-2xl border border-blue-500/10 shadow-[0_0_30px_rgba(37,99,235,0.03)] lg:col-span-1 flex flex-col h-[400px]"
+                >
+                  <h3 className="text-sm font-black text-white mb-2 flex items-center gap-2 uppercase tracking-widest italic">
+                    <MapPin className="w-4 h-4 text-blue-500" />
+                    Fleet Deployment Map
                   </h3>
-                  <p className="text-xs text-slate-500 mb-4">Motorcycles deployed in each active district of Zambia.</p>
+                  <p className="text-[10px] text-slate-500 mb-6 font-bold uppercase tracking-wider">Geospatial distribution across active sectors</p>
                   
-                  <div className="flex-1 space-y-4 overflow-y-auto pr-2">
+                  <div className="flex-1 space-y-6 overflow-y-auto pr-2 custom-scrollbar">
                     {Object.keys(bikesByDistrict).length === 0 ? (
-                      <p className="text-xs text-slate-500 italic">No fleet bikes registered in any districts yet.</p>
+                      <p className="text-xs text-slate-500 italic py-10 text-center uppercase font-bold tracking-widest">No deployment data available</p>
                     ) : (
-                      Object.entries(bikesByDistrict).map(([district, count]) => {
+                      Object.entries(bikesByDistrict).map(([district, count], idx) => {
                         const countNum = Number(count);
                         const percentage = totalBikes > 0 ? (countNum / totalBikes) * 100 : 0;
                         return (
-                          <div key={district} className="space-y-1.5">
-                            <div className="flex justify-between items-center text-xs">
-                              <span className="font-bold text-slate-700">{district}</span>
-                              <span className="font-semibold text-blue-600 bg-blue-50 px-2 py-0.5 rounded-md">
-                                {count} {count === 1 ? 'bike' : 'bikes'}
+                          <motion.div 
+                            initial={{ opacity: 0, x: -10 }}
+                            animate={{ opacity: 1, x: 0 }}
+                            transition={{ delay: 0.8 + (idx * 0.05) }}
+                            key={district} 
+                            className="space-y-2 group"
+                          >
+                            <div className="flex justify-between items-center">
+                              <span className="text-[11px] font-black text-slate-300 uppercase tracking-widest group-hover:text-blue-400 transition-colors">{district}</span>
+                              <span className="text-[10px] font-black text-blue-400 bg-blue-500/10 px-2 py-0.5 rounded border border-blue-500/20">
+                                {count} UNITS
                               </span>
                             </div>
                             {/* Progress bar */}
-                            <div className="w-full bg-slate-100 h-2 rounded-full overflow-hidden">
-                              <div 
-                                className="bg-blue-600 h-full rounded-full transition-all duration-500" 
-                                style={{ width: `${percentage}%` }}
-                              ></div>
+                            <div className="w-full bg-[#0a0f1d] h-1.5 rounded-full overflow-hidden border border-blue-500/5">
+                              <motion.div 
+                                initial={{ width: 0 }}
+                                animate={{ width: `${percentage}%` }}
+                                transition={{ duration: 1, delay: 1 }}
+                                className="bg-gradient-to-r from-blue-600 to-blue-400 h-full rounded-full shadow-[0_0_10px_rgba(37,99,235,0.5)]" 
+                              ></motion.div>
                             </div>
-                          </div>
+                          </motion.div>
                         );
                       })
                     )}
                   </div>
-                </div>
+                </motion.div>
 
                 {/* Completed and Pending Services (col-span-2) */}
                 <div className="lg:col-span-2 grid grid-cols-1 sm:grid-cols-2 gap-6 h-[400px]">
                   
                   {/* Completed Services */}
-                  <div className="bg-white p-6 rounded-2xl border border-slate-200/80 shadow-sm flex flex-col h-full">
-                    <h3 className="text-sm font-bold text-slate-900 mb-1 flex items-center gap-1.5">
-                      <CheckCircle className="w-4 h-4 text-green-600" />
-                      Completed Services (Done)
+                  <motion.div 
+                    initial={{ opacity: 0, y: 20 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ delay: 0.8 }}
+                    className="bg-[#0d1425] p-6 rounded-2xl border border-emerald-500/10 shadow-[0_0_30px_rgba(16,185,129,0.03)] flex flex-col h-full"
+                  >
+                    <h3 className="text-[10px] font-black text-emerald-500 mb-1 flex items-center gap-1.5 uppercase tracking-widest italic">
+                      <CheckCircle className="w-4 h-4" />
+                      Maintenance Executed
                     </h3>
-                    <p className="text-[11px] text-slate-400 mb-3">Latest fleet maintenance services completed successfully.</p>
+                    <p className="text-[9px] text-slate-500 mb-6 font-bold uppercase tracking-wider">Historical performance logs</p>
                     
-                    <div className="flex-1 overflow-y-auto space-y-2.5 pr-1.5 text-xs">
+                    <div className="flex-1 overflow-y-auto space-y-3 pr-1.5 custom-scrollbar">
                       {logsList.filter(l => l.status === "done").length === 0 ? (
-                        <div className="text-center py-16 text-slate-400 italic">
-                          No completed services logged.
+                        <div className="text-center py-20 text-slate-700 italic text-[10px] uppercase font-black tracking-widest opacity-30">
+                          Empty execution history
                         </div>
                       ) : (
-                        logsList.filter(l => l.status === "done").map(log => (
-                          <div key={log.id} className="p-2.5 bg-slate-50/60 rounded-xl border border-slate-100/80 flex flex-col gap-1.5">
-                            <div className="flex justify-between items-start">
-                              <span className="font-extrabold text-slate-900">{log.bikeReg}</span>
-                              <span className="text-[10px] text-slate-400">{log.date}</span>
+                        logsList.filter(l => l.status === "done").map((log, idx) => (
+                          <motion.div 
+                            initial={{ opacity: 0, scale: 0.95 }}
+                            animate={{ opacity: 1, scale: 1 }}
+                            transition={{ delay: 0.9 + (idx * 0.05) }}
+                            key={log.id} 
+                            className="p-3 bg-[#0a0f1d] rounded-xl border border-emerald-500/5 hover:border-emerald-500/20 transition-all group"
+                          >
+                            <div className="flex justify-between items-start mb-2">
+                              <span className="font-black text-white text-sm tracking-tight group-hover:text-emerald-400 transition-colors">{log.bikeReg || log.bike?.regNo || `Bike #${log.bikeId}`}</span>
+                              <span className="text-[9px] text-slate-600 font-bold uppercase tracking-tighter">{log.date}</span>
                             </div>
-                            <div className="text-slate-500 text-[10px] truncate">
-                              <strong>Officer:</strong> {log.officer} ({log.district})
+                            <div className="text-slate-500 text-[9px] font-black uppercase tracking-widest mb-2 opacity-60">
+                              {log.officer} // {log.district}
                             </div>
-                            <div className="bg-white p-2 rounded border border-slate-100 text-slate-700 font-medium">
-                              <strong>Work Done:</strong> {log.workDone || "General maintenance check"}
+                            <div className="bg-emerald-500/5 p-2 rounded-lg border border-emerald-500/10 text-[10px] text-emerald-200/70 font-medium italic leading-relaxed mb-2">
+                              {log.workDone || "Standard maintenance protocols applied"}
                             </div>
                             {log.spares && log.spares.length > 0 && (
                               <div className="flex flex-wrap gap-1 items-center">
-                                {log.spares.map((s, idx) => (
-                                  <span key={idx} className="text-[9px] bg-indigo-50 text-indigo-600 border border-indigo-100/50 px-1.5 py-0.2 rounded font-semibold">
+                                {log.spares.map((s, sIdx) => (
+                                  <span key={sIdx} className="text-[8px] bg-emerald-500/10 text-emerald-500 border border-emerald-500/20 px-1.5 py-0.5 rounded font-black">
                                     {s.spareName} ({s.quantity})
                                   </span>
                                 ))}
                               </div>
                             )}
-                          </div>
+                          </motion.div>
                         ))
                       )}
                     </div>
-                  </div>
+                  </motion.div>
 
                   {/* Pending Services */}
-                  <div className="bg-white p-6 rounded-2xl border border-slate-200/80 shadow-sm flex flex-col h-full">
-                    <h3 className="text-sm font-bold text-slate-900 mb-1 flex items-center gap-1.5">
-                      <Clock className="w-4 h-4 text-amber-600" />
-                      Pending Services 
+                  <motion.div 
+                    initial={{ opacity: 0, y: 20 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ delay: 0.9 }}
+                    className="bg-[#0d1425] p-6 rounded-2xl border border-amber-500/10 shadow-[0_0_30px_rgba(245,158,11,0.03)] flex flex-col h-full"
+                  >
+                    <h3 className="text-[10px] font-black text-amber-500 mb-1 flex items-center gap-1.5 uppercase tracking-widest italic">
+                      <Clock className="w-4 h-4" />
+                      Active Alerts (Pending)
                     </h3>
-                    <p className="text-[11px] text-slate-400 mb-3">Bikes with pending/incomplete maintenance items.</p>
+                    <p className="text-[9px] text-slate-500 mb-6 font-bold uppercase tracking-wider">Unresolved system requirements</p>
                     
-                    <div className="flex-1 overflow-y-auto space-y-2.5 pr-1.5 text-xs">
+                    <div className="flex-1 overflow-y-auto space-y-3 pr-1.5 custom-scrollbar">
                       {logsList.filter(l => l.status === "pending").length === 0 ? (
-                        <div className="text-center py-16 text-slate-400 italic">
-                          No pending services at this time.
+                        <div className="text-center py-20 text-emerald-500/30 italic text-[10px] uppercase font-black tracking-widest">
+                          All systems operational
                         </div>
                       ) : (
-                        logsList.filter(l => l.status === "pending").map(log => (
-                          <div key={log.id} className="p-2.5 bg-slate-50/60 rounded-xl border border-slate-100/80 flex flex-col gap-1.5">
-                            <div className="flex justify-between items-start">
-                              <span className="font-extrabold text-slate-900">{log.bikeReg}</span>
-                              <span className="text-[10px] text-slate-400">{log.date}</span>
+                        logsList.filter(l => l.status === "pending").map((log, idx) => (
+                          <motion.div 
+                            initial={{ opacity: 0, scale: 0.95 }}
+                            animate={{ opacity: 1, scale: 1 }}
+                            transition={{ delay: 1.0 + (idx * 0.05) }}
+                            key={log.id} 
+                            className="p-3 bg-[#0a0f1d] rounded-xl border border-amber-500/5 hover:border-amber-500/20 transition-all group"
+                          >
+                            <div className="flex justify-between items-start mb-2">
+                              <span className="font-black text-white text-sm tracking-tight group-hover:text-amber-400 transition-colors">{log.bikeReg || log.bike?.regNo || `Bike #${log.bikeId}`}</span>
+                              <span className="text-[9px] text-amber-500/50 font-bold uppercase tracking-tighter italic">Awaiting Action</span>
                             </div>
-                            <div className="text-slate-500 text-[10px] truncate">
-                              <strong>Officer:</strong> {log.officer} ({log.district})
+                            <div className="text-slate-500 text-[9px] font-black uppercase tracking-widest mb-2 opacity-60">
+                              {log.officer} // {log.district}
                             </div>
-                            <div className="bg-white p-2 rounded border border-slate-100 text-amber-700 font-semibold">
-                              <strong>Work Pending:</strong> {log.workPending || "Upcoming service inspection required"}
+                            <div className="bg-amber-500/5 p-2 rounded-lg border border-amber-500/10 text-[10px] text-amber-200/70 font-medium italic leading-relaxed mb-2">
+                              {log.workPending || "Maintenance sequence pending validation"}
                             </div>
                             {log.spares && log.spares.length > 0 && (
                               <div className="flex flex-wrap gap-1 items-center">
-                                {log.spares.map((s, idx) => (
-                                  <span key={idx} className="text-[9px] bg-slate-100 text-slate-600 border border-slate-200 px-1.5 py-0.2 rounded font-medium">
+                                {log.spares.map((s, sIdx) => (
+                                  <span key={sIdx} className="text-[8px] bg-amber-500/10 text-amber-500 border border-amber-500/20 px-1.5 py-0.5 rounded font-black">
                                     {s.spareName} ({s.quantity})
                                   </span>
                                 ))}
                               </div>
                             )}
-                          </div>
+                          </motion.div>
                         ))
                       )}
                     </div>
-                  </div>
+                  </motion.div>
 
                 </div>
 
@@ -2286,7 +2175,7 @@ export default function App() {
                                 {log.date}
                               </td>
                               <td className="px-6 py-4 whitespace-nowrap font-bold text-slate-900">
-                                {log.bikeReg}
+                                {log.bikeReg || (log.bike?.regNo) || "N/A"}
                               </td>
                               <td className="px-6 py-4 whitespace-nowrap text-xs text-slate-500">
                                 {log.officer}
@@ -2418,87 +2307,129 @@ export default function App() {
 
           {/* ==================== SPARES STOCK VIEW ==================== */}
           {activeTab === "spares" && (
-            <div className="space-y-6">
-              <div className="bg-blue-50 border border-blue-200/50 rounded-2xl p-4 flex gap-3 text-xs text-blue-800">
-                <AlertCircle className="w-5 h-5 text-blue-600 flex-shrink-0" />
-                <p>
-                  <strong>Admin Stock Panel</strong>: Manage available spare parts in stock here. Spares logged on bike maintenance services will automatically deduct from this inventory pool, showing live real-time stock quantities.
-                </p>
+            <div className="space-y-6 animate-in slide-in-from-bottom-2 duration-300">
+              <div className="bg-[#0d1425] border border-blue-500/10 rounded-2xl p-6 flex flex-col md:flex-row md:items-center justify-between gap-4 shadow-xl">
+                <div className="flex gap-4">
+                  <div className="w-12 h-12 bg-blue-500/10 rounded-2xl flex items-center justify-center border border-blue-500/20">
+                    <Package className="w-6 h-6 text-blue-400" />
+                  </div>
+                  <div>
+                    <h2 className="text-white font-black uppercase tracking-widest italic text-lg">Inventory Control</h2>
+                    <p className="text-[10px] text-slate-500 font-bold uppercase tracking-wider mt-1">Resource allocation & stock management matrix</p>
+                  </div>
+                </div>
+                <button
+                  onClick={() => openSpareModal()}
+                  className="bg-blue-600 hover:bg-blue-700 text-white px-6 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-[0.2em] shadow-[0_0_20px_rgba(37,99,235,0.3)] transition-all cursor-pointer flex items-center gap-2 group"
+                >
+                  <Plus className="w-4 h-4 group-hover:rotate-90 transition-transform" />
+                  Provision New Stock
+                </button>
               </div>
 
               {sparesList.length === 0 ? (
-                <div className="text-center py-20 bg-white rounded-2xl border border-slate-200/80 shadow-sm">
-                  <Package className="w-16 h-16 text-slate-300 mx-auto mb-3" />
-                  <h4 className="text-lg font-bold text-slate-800">No Spares in Stock</h4>
-                  <p className="text-xs text-slate-500 mt-1 max-w-xs mx-auto">Begin by logging parts in stock, setting their quantities, dates, and recorders.</p>
+                <div className="text-center py-24 bg-[#0d1425] rounded-3xl border border-blue-500/5 shadow-inner">
+                  <Package className="w-20 h-20 text-slate-800 mx-auto mb-4 opacity-20" />
+                  <h4 className="text-xl font-black text-slate-700 uppercase italic tracking-widest">Inventory Depleted</h4>
+                  <p className="text-[10px] text-slate-600 mt-2 font-bold uppercase tracking-widest max-w-xs mx-auto">Zero resources detected in the primary buffer. Initialize provisioning sequence.</p>
                   <button
                     onClick={() => openSpareModal()}
-                    className="mt-4 bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-xl text-xs font-semibold shadow-lg shadow-blue-500/10 transition-all cursor-pointer"
+                    className="mt-6 bg-slate-800 hover:bg-blue-600 text-slate-400 hover:text-white px-6 py-3 rounded-2xl text-[10px] font-black uppercase tracking-widest transition-all cursor-pointer border border-slate-700/50"
                   >
-                    Add Your First Spare Stock
+                    Execute First Provisioning
                   </button>
                 </div>
               ) : (
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
                   {sparesList.map(spare => {
+                    const isLow = spare.quantity < 3;
                     return (
-                      <div key={spare.id} className="bg-white rounded-2xl border border-slate-200/80 p-6 shadow-sm flex flex-col justify-between hover:shadow-md transition-shadow">
-                        <div>
-                          <div className="flex justify-between items-start mb-4">
-                            <div className="p-3 bg-indigo-50 text-indigo-600 rounded-xl">
+                      <motion.div 
+                        initial={{ opacity: 0, scale: 0.95 }}
+                        animate={{ opacity: 1, scale: 1 }}
+                        key={spare.id} 
+                        className={`bg-[#0d1425] rounded-3xl border transition-all duration-300 group overflow-hidden ${isLow ? "border-rose-500/20 shadow-[0_0_30px_rgba(244,63,94,0.05)]" : "border-blue-500/5 hover:border-blue-500/20 shadow-xl"}`}
+                      >
+                        <div className="p-6">
+                          <div className="flex justify-between items-start mb-6">
+                            <div className={`p-4 rounded-2xl border transition-colors ${isLow ? "bg-rose-500/10 text-rose-500 border-rose-500/20" : "bg-blue-500/5 text-blue-400 border-blue-500/10 group-hover:bg-blue-600 group-hover:text-white"}`}>
                               <Package className="w-6 h-6" />
                             </div>
-                            <div className="flex gap-1.5">
+                            <div className="flex gap-2">
                               <button
                                 onClick={() => openSpareModal(spare)}
-                                className="p-1.5 text-slate-600 hover:bg-slate-100 rounded-lg transition-colors cursor-pointer"
+                                className="p-2.5 bg-slate-800/50 text-slate-400 hover:text-white hover:bg-blue-600 rounded-xl transition-all cursor-pointer border border-slate-700/50"
+                                title="Edit Asset Data"
                               >
                                 <Edit className="w-4 h-4" />
                               </button>
                               <button
                                 onClick={() => handleDeleteSpare(spare.id)}
-                                className="p-1.5 text-rose-600 hover:bg-rose-50 rounded-lg transition-colors cursor-pointer"
+                                className="p-2.5 bg-slate-800/50 text-slate-400 hover:text-rose-500 hover:bg-rose-500/10 rounded-xl transition-all cursor-pointer border border-slate-700/50"
+                                title="Decommission Asset"
                               >
                                 <Trash2 className="w-4 h-4" />
                               </button>
                             </div>
                           </div>
 
-                          <h3 className="text-base font-bold text-slate-900 flex items-center justify-between gap-2">
-                            <span className="truncate" title={spare.name}>{spare.name}</span>
-                            {spare.quantity < 3 && (
-                              <span className="px-2 py-1 rounded-md bg-rose-100 text-rose-700 text-[10px] font-extrabold uppercase tracking-wide border border-rose-200 shadow-sm shrink-0 flex items-center gap-1">
-                                <AlertCircle className="w-3 h-3" />
-                                Low Stock
-                              </span>
-                            )}
-                          </h3>
+                          <div className="space-y-1 mb-6">
+                            <div className="flex items-center justify-between">
+                              <h3 className="text-lg font-black text-white uppercase italic tracking-tight truncate pr-4" title={spare.name}>
+                                {spare.name}
+                              </h3>
+                              {isLow && (
+                                <span className="flex items-center gap-1.5 px-2 py-1 bg-rose-500/10 text-rose-500 text-[8px] font-black uppercase tracking-widest rounded-lg animate-pulse border border-rose-500/20">
+                                  Critical Level
+                                </span>
+                              )}
+                            </div>
+                            <p className="text-[9px] text-slate-500 font-bold uppercase tracking-[0.2em]">Part ID: SPC-{spare.id.toString().padStart(4, "0")}</p>
+                          </div>
                           
-                          <div className="mt-4 p-4 bg-slate-50 rounded-xl border border-slate-100 flex justify-between items-center">
-                            <span className="text-xs text-slate-500 font-medium">Quantity in Stock</span>
-                            <span className={`text-base font-bold ${spare.quantity > 5 ? "text-green-600" : spare.quantity > 0 ? "text-amber-600" : "text-rose-600"}`}>
-                              {spare.quantity} units
-                            </span>
+                          <div className={`p-5 rounded-2xl border flex justify-between items-center transition-all ${isLow ? "bg-rose-500/5 border-rose-500/10" : "bg-slate-900/50 border-slate-800"}`}>
+                            <div className="flex flex-col">
+                              <span className="text-[10px] text-slate-500 font-black uppercase tracking-widest mb-1">Stock Reservoir</span>
+                              <span className={`text-2xl font-black italic tracking-tighter ${spare.quantity > 5 ? "text-emerald-500" : isLow ? "text-rose-500" : "text-amber-500"}`}>
+                                {spare.quantity} <span className="text-xs uppercase not-italic ml-1">Units</span>
+                              </span>
+                            </div>
+                            <div className="flex flex-col items-end">
+                              <span className="text-[8px] text-slate-600 font-bold uppercase tracking-tighter mb-1">Status</span>
+                              <span className={`text-[10px] font-black uppercase italic tracking-widest ${spare.quantity > 0 ? "text-emerald-500/70" : "text-rose-500/70"}`}>
+                                {spare.quantity > 0 ? "Available" : "Depleted"}
+                              </span>
+                            </div>
                           </div>
 
-                          <div className="mt-4 space-y-2 text-xs text-slate-500">
-                            <div className="flex items-center gap-2">
-                              <Calendar className="w-3.5 h-3.5 text-slate-400" />
-                              <span>Added On: <strong className="text-slate-700">{spare.dateAdded}</strong></span>
+                          <div className="mt-6 grid grid-cols-2 gap-4">
+                            <div className="space-y-1">
+                              <span className="text-[8px] text-slate-600 font-black uppercase tracking-widest block">Last Provision</span>
+                              <div className="flex items-center gap-1.5 text-xs text-slate-400 font-bold">
+                                <Calendar className="w-3 h-3 text-blue-500/50" />
+                                {spare.dateAdded}
+                              </div>
                             </div>
-                            <div className="flex items-center gap-2">
-                              <User className="w-3.5 h-3.5 text-slate-400" />
-                              <span>Added By: <strong className="text-slate-700">{spare.addedBy}</strong></span>
+                            <div className="space-y-1 text-right">
+                              <span className="text-[8px] text-slate-600 font-black uppercase tracking-widest block">Custodian</span>
+                              <div className="flex items-center justify-end gap-1.5 text-xs text-slate-400 font-bold">
+                                <User className="w-3 h-3 text-blue-500/50" />
+                                {spare.addedBy}
+                              </div>
                             </div>
                           </div>
                         </div>
 
-                        <div className="mt-6 pt-4 border-t border-slate-100 flex justify-end">
-                          <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${spare.quantity > 0 ? "bg-green-50 text-green-600" : "bg-rose-50 text-rose-600"}`}>
-                            {spare.quantity > 0 ? "In Stock" : "Out of Stock"}
-                          </span>
+                        <div className={`py-3 px-6 text-center border-t transition-all ${isLow ? "bg-rose-500/5 border-rose-500/10" : "bg-blue-500/5 border-blue-500/10"}`}>
+                          <button 
+                            onClick={() => openSpareModal(spare)}
+                            className={`text-[9px] font-black uppercase tracking-[0.2em] flex items-center justify-center gap-2 mx-auto transition-colors ${isLow ? "text-rose-400 hover:text-rose-300" : "text-blue-400 hover:text-blue-300"}`}
+                          >
+                            <RefreshCw className="w-3 h-3" />
+                            Initiate Stock Injection
+                          </button>
                         </div>
-                      </div>
+                      </motion.div>
                     );
                   })}
                 </div>

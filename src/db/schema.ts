@@ -18,6 +18,7 @@ export const serviceRequests = pgTable('service_requests', {
     .references(() => bikes.id, { onDelete: 'cascade' })
     .notNull(),
   bikeReg: text('bike_reg').notNull(),
+  officerUid: text('officer_uid').references(() => users.uid, { onDelete: 'set null' }),
   requestedBy: text('requested_by').notNull(), // User email
   serviceType: text('service_type').notNull(),
   problemDescription: text('problem_description').notNull(),

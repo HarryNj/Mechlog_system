@@ -34,6 +34,7 @@ import { requireAuth, AuthRequest } from "./src/middleware/auth.ts";
 import { getOrCreateUser } from "./src/db/users.ts";
 
 
+
 // Automatic self-healing database schema verification
 async function ensureDatabaseSchema() {
   console.log("Starting automatic self-healing database schema check...");
@@ -43,12 +44,12 @@ async function ensureDatabaseSchema() {
       CREATE TABLE IF NOT EXISTS users (
         id SERIAL PRIMARY KEY,
         uid TEXT NOT NULL UNIQUE,
-        email TEXT NOT NULL,
+        email TEXT NOT NULL UNIQUE,
         password_hash TEXT,
-        name TEXT,
+        name TEXT NOT NULL,
         phone_number TEXT,
         role TEXT DEFAULT 'user' NOT NULL,
-        created_at TIMESTAMP DEFAULT NOW()
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       );
     `);
 
@@ -110,23 +111,39 @@ async function ensureDatabaseSchema() {
         id SERIAL PRIMARY KEY,
         bike_id INTEGER NOT NULL REFERENCES bikes(id) ON DELETE CASCADE,
         bike_reg TEXT NOT NULL,
+        officer_uid TEXT REFERENCES users(uid) ON DELETE SET NULL,
         requested_by TEXT NOT NULL,
         service_type TEXT NOT NULL,
         problem_description TEXT NOT NULL,
         status TEXT DEFAULT 'pending' NOT NULL,
         date_requested TEXT NOT NULL DEFAULT '',
-        created_at TIMESTAMP DEFAULT NOW()
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       );
     `);
 
     // 2. Self-heal/Migrate missing columns on existing tables
     const columnsCheck = [
+      { table: "users", column: "email", type: "TEXT NOT NULL UNIQUE" },
+      { table: "users", column: "name", type: "TEXT NOT NULL DEFAULT 'User'" },
       { table: "users", column: "password_hash", type: "TEXT" },
       { table: "users", column: "phone_number", type: "TEXT" },
       { table: "users", column: "role", type: "TEXT DEFAULT 'user' NOT NULL" },
+      { table: "users", column: "created_at", type: "TIMESTAMP DEFAULT CURRENT_TIMESTAMP" },
       { table: "bikes", column: "date_added", type: "TEXT NOT NULL DEFAULT ''" },
+      { table: "bikes", column: "created_at", type: "TIMESTAMP DEFAULT CURRENT_TIMESTAMP" },
+      { table: "spares_inventory", column: "date_added", type: "TEXT NOT NULL DEFAULT ''" },
+      { table: "spares_inventory", column: "added_by", type: "TEXT NOT NULL DEFAULT 'admin'" },
+      { table: "spares_inventory", column: "created_at", type: "TIMESTAMP DEFAULT CURRENT_TIMESTAMP" },
+      { table: "service_logs", column: "next_service_date", type: "TEXT" },
+      { table: "service_logs", column: "next_service_mileage", type: "INTEGER" },
+      { table: "service_logs", column: "work_done", type: "TEXT" },
+      { table: "service_logs", column: "work_pending", type: "TEXT" },
+      { table: "service_logs", column: "created_at", type: "TIMESTAMP DEFAULT CURRENT_TIMESTAMP" },
+      { table: "service_requests", column: "bike_reg", type: "TEXT NOT NULL DEFAULT 'Unknown'" },
       { table: "service_requests", column: "status", type: "TEXT DEFAULT 'pending' NOT NULL" },
-      { table: "service_requests", column: "date_requested", type: "TEXT NOT NULL DEFAULT ''" }
+      { table: "service_requests", column: "date_requested", type: "TEXT NOT NULL DEFAULT ''" },
+      { table: "service_requests", column: "officer_uid", type: "TEXT" },
+      { table: "service_requests", column: "created_at", type: "TIMESTAMP DEFAULT CURRENT_TIMESTAMP" }
     ];
 
     for (const check of columnsCheck) {
@@ -147,16 +164,32 @@ async function ensureDatabaseSchema() {
     }
 
     console.log("Database schema check completed. Self-healing active & database is ready!");
+
+    // Seed dummy admin user for bypass
+    try {
+      const dummyUid = "admin-bypass";
+      const existing = await db.select().from(users).where(eq(users.uid, dummyUid));
+      if (existing.length === 0) {
+        console.log("Seeding dummy admin user...");
+        await db.insert(users).values({
+          uid: dummyUid,
+          email: "admin@effzambia.org",
+          name: "Admin User",
+          phoneNumber: "+260123456789",
+          role: "admin"
+        });
+        console.log("Dummy admin user seeded.");
+      }
+    } catch (seedErr: any) {
+      console.error("Failed to seed dummy admin user:", seedErr);
+    }
   } catch (err: any) {
     console.error("Critical error in database self-healing schema setup:", err);
   }
 }
 
-
 async function startServer() {
-  // Ensure the DB schema is up-to-date and all columns/tables exist
   await ensureDatabaseSchema();
-
   const app = express();
   const PORT = parseInt(process.env.PORT || "3000", 10);
 
@@ -201,7 +234,7 @@ async function startServer() {
       const uid = "cust_" + Date.now() + "_" + Math.random().toString(36).substring(2, 7);
       
       // Determine role
-      const isAdminEmail = lowerEmail === "harrisonnjobvu@gmail.com" || lowerEmail === "harrisonnjobvu@gamil.com" || lowerEmail === "admin@eff.org";
+      const isAdminEmail = lowerEmail === "harrisonnjobvu@gmail.com" || lowerEmail === "harrisonnjobvu@gamil.com" || lowerEmail === "admin@effzambia.org";
       const role = isAdminEmail ? "admin" : "user";
 
       const [newUser] = await db.insert(users).values({
@@ -712,8 +745,9 @@ async function startServer() {
   // --- USER MANAGEMENT API ROUTES ---
   app.get("/api/users", requireAuth, async (req: AuthRequest, res) => {
     try {
-      const dbUser = await db.select().from(users).where(eq(users.uid, req.user!.uid));
-      if (!dbUser[0] || dbUser[0].role !== "admin") {
+      if (!req.user?.uid) return res.status(401).json({ error: "Unauthorized" });
+      const [dbUser] = await db.select().from(users).where(eq(users.uid, req.user.uid));
+      if (!dbUser || dbUser.role !== "admin") {
         return res.status(403).json({ error: "Forbidden: Admins only" });
       }
       const allUsers = await db.select().from(users).orderBy(desc(users.createdAt));
@@ -843,9 +877,10 @@ async function startServer() {
 
   app.get("/api/requests", requireAuth, async (req: AuthRequest, res) => {
     try {
-      const [dbUser] = await db.select().from(users).where(eq(users.uid, req.user!.uid));
+      if (!req.user?.uid) return res.status(401).json({ error: "Unauthorized" });
+      const [dbUser] = await db.select().from(users).where(eq(users.uid, req.user.uid));
       if (!dbUser) {
-        return res.status(403).json({ error: "User profile not found" });
+        return res.status(403).json({ error: "User profile not found in database" });
       }
 
       let list;
