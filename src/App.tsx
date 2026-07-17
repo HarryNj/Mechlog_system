@@ -354,12 +354,17 @@ export default function App() {
   const [activeTab, setActiveTab] = useState<"dashboard" | "logs" | "bikes" | "spares" | "users" | "requests">("dashboard");
 
   // App Data State
-  const [bikesList, setBikesList] = useState<BikeType[]>([]);
-  const [sparesList, setSparesList] = useState<SpareInventoryType[]>([]);
-  const [logsList, setLogsList] = useState<ServiceLogType[]>([]);
-  const [dbUser, setDbUser] = useState<UserDBType | null>(null);
-  const [usersList, setUsersList] = useState<UserDBType[]>([]);
-  const [requestsList, setServiceRequestsList] = useState<ServiceRequestType[]>([]);
+  const [bikesList, setBikesList] = useState<BikeType[]>(() => loadFromStorage("bikes"));
+  const [sparesList, setSparesList] = useState<SpareInventoryType[]>(() => loadFromStorage("spares"));
+  const [logsList, setLogsList] = useState<ServiceLogType[]>(() => loadFromStorage("logs"));
+  const [dbUser, setDbUser] = useState<UserDBType | null>(() => {
+    try {
+      const data = localStorage.getItem("eff_cache_dbUser");
+      return data ? JSON.parse(data) : null;
+    } catch { return null; }
+  });
+  const [usersList, setUsersList] = useState<UserDBType[]>(() => loadFromStorage("users"));
+  const [requestsList, setServiceRequestsList] = useState<ServiceRequestType[]>(() => loadFromStorage("requests"));
 
 
   // Filtering & Searching State
@@ -367,6 +372,22 @@ export default function App() {
   const [logStatusFilter, setLogStatusFilter] = useState("");
   const [logDistrictFilter, setLogDistrictFilter] = useState("");
   const [sparesTab, setSparesTab] = useState<"in_stock" | "used">("in_stock");
+
+  // Local Storage Helpers
+  const saveToStorage = (key: string, data: any) => {
+    try {
+      localStorage.setItem(`eff_cache_${key}`, JSON.stringify(data));
+    } catch (e) { console.error("Error saving to storage:", e); }
+  };
+  const loadFromStorage = (key: string) => {
+    try {
+      const data = localStorage.getItem(`eff_cache_${key}`);
+      return data ? JSON.parse(data) : [];
+    } catch (e) {
+      console.error("Error loading from storage:", e);
+      return [];
+    }
+  };
 
   // Modals state
   const [agreementModalOpen, setAgreementModalOpen] = useState(false);
@@ -459,6 +480,7 @@ export default function App() {
         const data = await res.json();
         if (data.status === "success" && data.user) {
           setDbUser(data.user);
+          saveToStorage("dbUser", data.user);
           await fetchData(currentUser, data.user);
           return;
         }
@@ -505,12 +527,32 @@ export default function App() {
         } catch (_) {}
       }
       
-      if (results[0].ok) setBikesList(await results[0].json());
-      if (results[1].ok) setSparesList(await results[1].json());
-      if (results[2].ok) setLogsList(await results[2].json());
-      if (results[3].ok) setServiceRequestsList(await results[3].json());
+      if (results[0].ok) {
+        const data = await results[0].json();
+        setBikesList(data);
+        saveToStorage("bikes", data);
+      }
+      if (results[1].ok) {
+        const data = await results[1].json();
+        setSparesList(data);
+        saveToStorage("spares", data);
+      }
+      if (results[2].ok) {
+        const data = await results[2].json();
+        setLogsList(data);
+        saveToStorage("logs", data);
+      }
+      if (results[3].ok) {
+        const data = await results[3].json();
+        setServiceRequestsList(data);
+        saveToStorage("requests", data);
+      }
       if (isAdminUser) {
-        if (results[4] && results[4].ok) setUsersList(await results[4].json());
+        if (results[4] && results[4].ok) {
+          const data = await results[4].json();
+          setUsersList(data);
+          saveToStorage("users", data);
+        }
       }
     } catch (err) {
       console.error("Error fetching data:", err);
