@@ -99,6 +99,43 @@ async function startServer() {
     }
   });
 
+  app.post("/api/auth/feo-login", async (req, res) => {
+    try {
+      const { name, phoneNumber } = req.body;
+      if (!name || !phoneNumber) {
+        return res.status(400).json({ error: "Name and phone number are required" });
+      }
+
+      // Check if user already exists
+      const existing = await db.select().from(users).where(eq(users.phoneNumber, phoneNumber));
+      
+      let user;
+      if (existing.length > 0) {
+        user = existing[0];
+        // update name just in case
+        const [updatedUser] = await db.update(users).set({ name }).where(eq(users.id, user.id)).returning();
+        user = updatedUser;
+      } else {
+        const uid = "feo_" + Date.now() + "_" + Math.random().toString(36).substring(2, 7);
+        const email = `feo_${phoneNumber.replace(/\D/g, '')}@eff.zambia`;
+        const [newUser] = await db.insert(users).values({
+          uid,
+          email,
+          name,
+          phoneNumber,
+          role: "user"
+        }).returning();
+        user = newUser;
+      }
+
+      const token = generateCustomToken(user);
+      res.json({ status: "success", user, token });
+    } catch (error: any) {
+      console.error("FEO login error:", error);
+      res.status(500).json({ error: "Failed to login as FEO", details: error.message });
+    }
+  });
+
   // Custom Login Route (using relational PostgreSQL storage)
   app.post("/api/auth/custom-login", async (req, res) => {
     try {

@@ -348,28 +348,32 @@ export default function App() {
   useEffect(() => {
     const restoreSession = async () => {
       try {
-        const dummyAdminUser = {
-          uid: "admin-bypass",
-          email: "admin@eff.zambia",
-          displayName: "Admin User",
-          name: "Admin User",
-          phoneNumber: "+260123456789",
-          token: "dummy-token",
-          getIdToken: async () => "dummy-token"
-        };
-        const dummyDbUser = {
-          id: 1,
-          uid: "admin-bypass",
-          email: "admin@eff.zambia",
-          name: "Admin User",
-          role: "admin",
-          phoneNumber: "+260123456789"
-        };
-        setUser(dummyAdminUser as any);
-        setDbUser(dummyDbUser as any);
-        await fetchData(dummyAdminUser as any, dummyDbUser as any);
+        const stored = localStorage.getItem("eff_user_session");
+        if (stored) {
+          const session = JSON.parse(stored);
+          const customUser = {
+            uid: session.uid,
+            email: session.email,
+            displayName: session.name,
+            name: session.name,
+            phoneNumber: session.phoneNumber,
+            token: session.token,
+            getIdToken: async () => session.token
+          };
+          setUser(customUser as any);
+          
+          const partialDbUser = {
+            uid: session.uid,
+            email: session.email,
+            name: session.name,
+            role: session.role,
+            phoneNumber: session.phoneNumber
+          };
+          setDbUser(partialDbUser as any);
+          await fetchData(customUser as any, partialDbUser as any);
+        }
       } catch (e) {
-        console.error("Error setting dummy session:", e);
+        console.error("Error setting session:", e);
       } finally {
         setLoading(false);
       }
@@ -584,6 +588,7 @@ export default function App() {
 
   const handleSignOut = async () => {
     try {
+      localStorage.removeItem("eff_user_session");
       window.location.reload();
     } catch (err) {
       console.error("Sign-out failed:", err);
@@ -1087,6 +1092,33 @@ export default function App() {
     });
   });
 
+  // Services by District
+  const servicesByDistrict: { [district: string]: number } = {};
+  logsList.forEach(log => {
+    if (log.district) {
+      servicesByDistrict[log.district] = (servicesByDistrict[log.district] || 0) + 1;
+    }
+  });
+  const districtStatsArray = Object.entries(servicesByDistrict)
+    .map(([district, count]) => ({ district, count }))
+    .sort((a, b) => b.count - a.count);
+
+  // Spares Used by Bike
+  const sparesByBike: { [bikeReg: string]: number } = {};
+  logsList.forEach(log => {
+    const bike = bikesList.find(b => b.id === log.bikeId);
+    if (bike && log.spares) {
+      const sparesCount = log.spares.reduce((sum, s) => sum + s.quantity, 0);
+      if (sparesCount > 0) {
+        sparesByBike[bike.regNo] = (sparesByBike[bike.regNo] || 0) + sparesCount;
+      }
+    }
+  });
+  const topBikesBySpares = Object.entries(sparesByBike)
+    .map(([regNo, quantity]) => ({ regNo, quantity }))
+    .sort((a, b) => b.quantity - a.quantity)
+    .slice(0, 5); // top 5
+
   // Calculate stats per-bike
   const bikeStatsMap = bikesList.reduce((acc, bike) => {
     const bikeLogs = logsList.filter(l => l.bikeId === bike.id);
@@ -1225,11 +1257,28 @@ export default function App() {
 
         <div className="mt-8 sm:mx-auto sm:w-full sm:max-w-md relative z-10 px-4 sm:px-0">
           <div className="bg-slate-800 py-8 px-4 shadow-xl rounded-2xl sm:px-10 border border-slate-700/50">
-            {authMode === "signin" ? (
+            <div className="flex gap-2 mb-6 p-1 bg-slate-900 rounded-xl">
+              <button
+                type="button"
+                onClick={() => setAuthMode("signin")}
+                className={`flex-1 py-2 text-xs font-semibold uppercase tracking-wider rounded-lg transition-all ${authMode !== "register" ? "bg-slate-800 text-white shadow" : "text-slate-400 hover:text-slate-200"}`}
+              >
+                Admin Access
+              </button>
+              <button
+                type="button"
+                onClick={() => setAuthMode("register")}
+                className={`flex-1 py-2 text-xs font-semibold uppercase tracking-wider rounded-lg transition-all ${authMode === "register" ? "bg-slate-800 text-white shadow" : "text-slate-400 hover:text-slate-200"}`}
+              >
+                FEO Access
+              </button>
+            </div>
+
+            {authMode !== "register" ? (
               <form onSubmit={handleEmailSignIn} className="space-y-5">
                 <div>
-                  <h3 className="text-xl font-bold text-white text-center">Sign In</h3>
-                  <p className="text-xs text-slate-400 text-center mt-1">Access your EFF Zambia fleet maintenance dashboard</p>
+                  <h3 className="text-xl font-bold text-white text-center">Admin Access</h3>
+                  <p className="text-xs text-slate-400 text-center mt-1">Enter your admin credentials</p>
                 </div>
 
                 {authError && (
@@ -1239,39 +1288,20 @@ export default function App() {
                   </div>
                 )}
 
-                {authSuccess && (
-                  <div className="p-3 bg-emerald-500/10 border border-emerald-500/20 rounded-xl text-emerald-400 text-xs flex gap-2">
-                    <span className="font-bold">✓</span>
-                    <span>{authSuccess}</span>
-                  </div>
-                )}
-
                 <div className="space-y-4">
                   <div>
-                    <label className="block text-xs font-semibold text-slate-300 uppercase tracking-wider mb-1.5">Email Address</label>
-                    <div className="relative">
-                      <input
-                        type="email"
-                        required
-                        placeholder="name@effzambia.org"
-                        value={authEmail}
-                        onChange={(e) => setAuthEmail(e.target.value)}
-                        className="w-full px-4 py-3 bg-slate-900 border border-slate-700 rounded-xl text-sm text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500/40 focus:border-blue-500 transition-all"
-                      />
-                    </div>
+                    <label className="block text-xs font-semibold text-slate-300 uppercase tracking-wider mb-1.5">Admin Email</label>
+                    <input
+                      type="email"
+                      required
+                      placeholder="admin@effzambia.org"
+                      value={authEmail}
+                      onChange={(e) => setAuthEmail(e.target.value)}
+                      className="w-full px-4 py-3 bg-slate-900 border border-slate-700 rounded-xl text-sm text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500/40 focus:border-blue-500 transition-all"
+                    />
                   </div>
-
                   <div>
-                    <div className="flex justify-between items-center mb-1.5">
-                      <label className="block text-xs font-semibold text-slate-300 uppercase tracking-wider">Password</label>
-                      <button
-                        type="button"
-                        onClick={() => { setAuthMode("forgot"); setAuthError(""); setAuthSuccess(""); }}
-                        className="text-xs text-blue-400 hover:text-blue-300 transition-colors cursor-pointer"
-                      >
-                        Forgot password?
-                      </button>
-                    </div>
+                    <label className="block text-xs font-semibold text-slate-300 uppercase tracking-wider mb-1.5">Password</label>
                     <input
                       type="password"
                       required
@@ -1288,34 +1318,54 @@ export default function App() {
                   disabled={authLoading}
                   className="w-full flex justify-center items-center gap-2 px-4 py-3 border border-transparent rounded-xl shadow-sm text-sm font-semibold text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 transition-all cursor-pointer disabled:opacity-50"
                 >
-                  {authLoading ? (
-                    <>
-                      <RefreshCw className="w-4 h-4 animate-spin" />
-                      Signing In...
-                    </>
-                  ) : (
-                    "Sign In"
-                  )}
+                  {authLoading ? "Signing In..." : "Sign In Securely"}
                 </button>
-
-                <div className="text-center pt-2">
-                  <p className="text-xs text-slate-400">
-                    Don't have an account?{" "}
-                    <button
-                      type="button"
-                      onClick={() => { setAuthMode("register"); setAuthError(""); setAuthSuccess(""); }}
-                      className="text-blue-400 hover:text-blue-300 font-semibold cursor-pointer"
-                    >
-                      Register Now
-                    </button>
-                  </p>
-                </div>
               </form>
-            ) : authMode === "register" ? (
-              <form onSubmit={handleEmailRegister} className="space-y-5">
+            ) : (
+              <form onSubmit={async (e) => {
+                e.preventDefault();
+                setAuthError("");
+                setAuthLoading(true);
+                try {
+                  const res = await fetch("/api/auth/feo-login", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ name: authName, phoneNumber: authPhone })
+                  });
+                  const data = await res.json();
+                  if (!res.ok) throw new Error(data.error || "Failed to login as FEO");
+                  
+                  const sessionUser = {
+                    uid: data.user.uid,
+                    email: data.user.email,
+                    name: data.user.name,
+                    phoneNumber: data.user.phoneNumber,
+                    role: data.user.role,
+                    token: data.token
+                  };
+                  localStorage.setItem("eff_user_session", JSON.stringify(sessionUser));
+                  
+                  const customUser = {
+                    uid: sessionUser.uid,
+                    email: sessionUser.email,
+                    displayName: sessionUser.name,
+                    name: sessionUser.name,
+                    phoneNumber: sessionUser.phoneNumber,
+                    token: sessionUser.token,
+                    getIdToken: async () => sessionUser.token
+                  };
+                  setUser(customUser as any);
+                  setDbUser(data.user);
+                  await fetchData(customUser as any, data.user);
+                } catch (err: any) {
+                  setAuthError(err.message);
+                } finally {
+                  setAuthLoading(false);
+                }
+              }} className="space-y-5">
                 <div>
-                  <h3 className="text-xl font-bold text-white text-center">Create Account</h3>
-                  <p className="text-xs text-slate-400 text-center mt-1">Register for EFF Fleet Maintenance access</p>
+                  <h3 className="text-xl font-bold text-white text-center">FEO Access</h3>
+                  <p className="text-xs text-slate-400 text-center mt-1">No password required. Just your name and phone.</p>
                 </div>
 
                 {authError && (
@@ -1331,29 +1381,16 @@ export default function App() {
                     <input
                       type="text"
                       required
-                      placeholder="e.g. John Banda"
+                      placeholder="e.g. John Doe"
                       value={authName}
                       onChange={(e) => setAuthName(e.target.value)}
                       className="w-full px-4 py-3 bg-slate-900 border border-slate-700 rounded-xl text-sm text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500/40 focus:border-blue-500 transition-all"
                     />
                   </div>
-
-                  <div>
-                    <label className="block text-xs font-semibold text-slate-300 uppercase tracking-wider mb-1.5">Email Address</label>
-                    <input
-                      type="email"
-                      required
-                      placeholder="name@effzambia.org"
-                      value={authEmail}
-                      onChange={(e) => setAuthEmail(e.target.value)}
-                      className="w-full px-4 py-3 bg-slate-900 border border-slate-700 rounded-xl text-sm text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500/40 focus:border-blue-500 transition-all"
-                    />
-                  </div>
-
                   <div>
                     <label className="block text-xs font-semibold text-slate-300 uppercase tracking-wider mb-1.5">Phone Number</label>
                     <input
-                      type="tel"
+                      type="text"
                       required
                       placeholder="e.g. +260 97 1234567"
                       value={authPhone}
@@ -1361,110 +1398,15 @@ export default function App() {
                       className="w-full px-4 py-3 bg-slate-900 border border-slate-700 rounded-xl text-sm text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500/40 focus:border-blue-500 transition-all"
                     />
                   </div>
-
-                  <div>
-                    <label className="block text-xs font-semibold text-slate-300 uppercase tracking-wider mb-1.5">Password</label>
-                    <input
-                      type="password"
-                      required
-                      minLength={6}
-                      placeholder="Min 6 characters"
-                      value={authPassword}
-                      onChange={(e) => setAuthPassword(e.target.value)}
-                      className="w-full px-4 py-3 bg-slate-900 border border-slate-700 rounded-xl text-sm text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500/40 focus:border-blue-500 transition-all"
-                    />
-                  </div>
                 </div>
 
                 <button
                   type="submit"
                   disabled={authLoading}
-                  className="w-full flex justify-center items-center gap-2 px-4 py-3 border border-transparent rounded-xl shadow-sm text-sm font-semibold text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 transition-all cursor-pointer disabled:opacity-50"
+                  className="w-full flex justify-center items-center gap-2 px-4 py-3 border border-transparent rounded-xl shadow-sm text-sm font-semibold text-slate-900 bg-amber-400 hover:bg-amber-300 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-amber-500 transition-all cursor-pointer disabled:opacity-50"
                 >
-                  {authLoading ? (
-                    <>
-                      <RefreshCw className="w-4 h-4 animate-spin" />
-                      Registering Account...
-                    </>
-                  ) : (
-                    "Register & Sign Up"
-                  )}
+                  {authLoading ? "Loading..." : "Enter Dashboard"}
                 </button>
-
-                <div className="text-center pt-2">
-                  <p className="text-xs text-slate-400">
-                    Already have an account?{" "}
-                    <button
-                      type="button"
-                      onClick={() => { setAuthMode("signin"); setAuthError(""); setAuthSuccess(""); }}
-                      className="text-blue-400 hover:text-blue-300 font-semibold cursor-pointer"
-                    >
-                      Sign In Here
-                    </button>
-                  </p>
-                </div>
-              </form>
-            ) : (
-              <form onSubmit={handleForgotPassword} className="space-y-5">
-                <div>
-                  <h3 className="text-xl font-bold text-white text-center">Reset Password</h3>
-                  <p className="text-xs text-slate-400 text-center mt-1">Enter your email address to submit a password reset request.</p>
-                </div>
-
-                {authError && (
-                  <div className="p-3 bg-rose-500/10 border border-rose-500/20 rounded-xl text-rose-400 text-xs flex gap-2">
-                    <span className="font-bold">⚠️</span>
-                    <span>{authError}</span>
-                  </div>
-                )}
-
-                {authSuccess && (
-                  <div className="p-3 bg-emerald-500/10 border border-emerald-500/20 rounded-xl text-emerald-400 text-xs flex gap-2">
-                    <span className="font-bold">✓</span>
-                    <span>{authSuccess}</span>
-                  </div>
-                )}
-
-                <div className="space-y-4">
-                  <div>
-                    <label className="block text-xs font-semibold text-slate-300 uppercase tracking-wider mb-1.5">Email Address</label>
-                    <input
-                      type="email"
-                      required
-                      placeholder="name@effzambia.org"
-                      value={authEmail}
-                      onChange={(e) => setAuthEmail(e.target.value)}
-                      className="w-full px-4 py-3 bg-slate-900 border border-slate-700 rounded-xl text-sm text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500/40 focus:border-blue-500 transition-all"
-                    />
-                  </div>
-                </div>
-
-                <button
-                  type="submit"
-                  disabled={authLoading}
-                  className="w-full flex justify-center items-center gap-2 px-4 py-3 border border-transparent rounded-xl shadow-sm text-sm font-semibold text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 transition-all cursor-pointer disabled:opacity-50"
-                >
-                  {authLoading ? (
-                    <>
-                      <RefreshCw className="w-4 h-4 animate-spin" />
-                      Sending Link...
-                    </>
-                  ) : (
-                    "Send Password Reset Link"
-                  )}
-                </button>
-
-                <div className="text-center pt-2">
-                  <p className="text-xs text-slate-400">
-                    <button
-                      type="button"
-                      onClick={() => { setAuthMode("signin"); setAuthError(""); setAuthSuccess(""); }}
-                      className="text-blue-400 hover:text-blue-300 font-semibold cursor-pointer"
-                    >
-                      ← Back to Sign In
-                    </button>
-                  </p>
-                </div>
               </form>
             )}
 
@@ -1480,8 +1422,8 @@ export default function App() {
               </button>
             </div>
           </div>
-        </div>
 
+        </div>
         <AgreementModal isOpen={agreementModalOpen} onClose={() => setAgreementModalOpen(false)} />
       </div>
     );
@@ -2051,6 +1993,79 @@ export default function App() {
                 </div>
 
               </div>
+
+              {/* Row 4: Analytics (Services by District & Top Spare Consumers) */}
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mt-6">
+                
+                {/* Services by District */}
+                <div className="bg-white p-6 rounded-2xl border border-slate-200/80 shadow-sm flex flex-col h-[300px]">
+                  <h3 className="text-base font-bold text-slate-900 mb-2 flex items-center gap-2">
+                    <CheckCircle className="w-5 h-5 text-emerald-600" />
+                    Services Done by District
+                  </h3>
+                  <p className="text-xs text-slate-500 mb-4">Total maintenance services completed in each district.</p>
+                  
+                  <div className="flex-1 space-y-4 overflow-y-auto pr-2">
+                    {districtStatsArray.length === 0 ? (
+                      <p className="text-xs text-slate-500 italic">No services logged yet.</p>
+                    ) : (
+                      districtStatsArray.map(({ district, count }) => {
+                        const percentage = totalCompleted > 0 ? (count / totalCompleted) * 100 : 0;
+                        return (
+                          <div key={district} className="space-y-1.5">
+                            <div className="flex justify-between items-center text-xs">
+                              <span className="font-bold text-slate-700">{district}</span>
+                              <span className="font-semibold text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-md">
+                                {count} {count === 1 ? 'service' : 'services'}
+                              </span>
+                            </div>
+                            <div className="w-full bg-slate-100 h-2 rounded-full overflow-hidden">
+                              <div 
+                                className="bg-emerald-500 h-full rounded-full transition-all duration-500" 
+                                style={{ width: `${percentage}%` }}
+                              ></div>
+                            </div>
+                          </div>
+                        );
+                      })
+                    )}
+                  </div>
+                </div>
+
+                {/* Top Bikes by Spares Used */}
+                <div className="bg-white p-6 rounded-2xl border border-slate-200/80 shadow-sm flex flex-col h-[300px]">
+                  <h3 className="text-base font-bold text-slate-900 mb-2 flex items-center gap-2">
+                    <Package className="w-5 h-5 text-rose-600" />
+                    High Spare Consumption (Top 5)
+                  </h3>
+                  <p className="text-xs text-slate-500 mb-4">Bikes utilizing the highest volume of spares.</p>
+                  
+                  <div className="flex-1 space-y-3 overflow-y-auto pr-2">
+                    {topBikesBySpares.length === 0 ? (
+                      <p className="text-xs text-slate-500 italic">No spares used yet.</p>
+                    ) : (
+                      topBikesBySpares.map(({ regNo, quantity }) => (
+                        <div key={regNo} className="p-3 bg-slate-50 border border-slate-100 rounded-xl flex items-center justify-between">
+                          <div className="flex items-center gap-3">
+                            <div className="w-8 h-8 rounded-full bg-rose-100 text-rose-600 flex items-center justify-center">
+                              <Bike className="w-4 h-4" />
+                            </div>
+                            <div>
+                              <div className="text-xs font-bold text-slate-900">{regNo}</div>
+                              <div className="text-[10px] text-slate-500">Fleet motorcycle</div>
+                            </div>
+                          </div>
+                          <div className="text-right">
+                            <span className="text-xs font-bold text-rose-600 bg-rose-50 px-2.5 py-1 rounded-md border border-rose-100/50">
+                              {quantity} units
+                            </span>
+                          </div>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                </div>
+              </div>
             </div>
           )}
 
@@ -2377,106 +2392,82 @@ export default function App() {
                     ? requestsList 
                     : requestsList.filter(r => r.requestedBy?.toLowerCase() === user?.email?.toLowerCase());
 
-                  if (displayRequests.length === 0) {
-                    return (
-                      <div className="text-center py-20">
-                        <Mail className="w-12 h-12 text-slate-300 mx-auto mb-3" />
-                        <h4 className="text-base font-bold text-slate-800">No Service Requests Found</h4>
-                        <p className="text-xs text-slate-500 mt-1">
-                          {isUserAdmin ? "All clear! No pending requests in the mailbox." : "You haven't submitted any service requests yet."}
-                        </p>
-                        {!isUserAdmin && (
-                          <button
-                            onClick={openRequestModal}
-                            className="mt-4 bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-xl text-xs font-semibold shadow-lg shadow-blue-500/10 transition-all cursor-pointer border border-blue-500/10"
-                          >
-                            Request Service Now
-                          </button>
-                        )}
-                      </div>
-                    );
-                  }
-
                   return (
-                    <div className="overflow-x-auto">
-                      <table className="w-full text-sm text-left">
-                        <thead className="bg-slate-50 border-b border-slate-200 text-xs font-bold text-slate-500 uppercase tracking-wider">
-                          <tr>
-                            <th className="px-6 py-4">Date Requested</th>
-                            <th className="px-6 py-4">Bike Reg</th>
-                            <th className="px-6 py-4">Requested By</th>
-                            <th className="px-6 py-4">Service Type</th>
-                            <th className="px-6 py-4">Problem Description</th>
-                            <th className="px-6 py-4">Status</th>
-                            <th className="px-6 py-4 text-center">Actions</th>
-                          </tr>
-                        </thead>
-                        <tbody className="divide-y divide-slate-100">
-                          {displayRequests.map(req => {
+                    <div className="flex flex-col h-[600px] bg-slate-50 relative">
+                      {/* Chat Messages Area */}
+                      <div className="flex-1 overflow-y-auto p-4 space-y-4">
+                        {displayRequests.length === 0 ? (
+                           <div className="text-center py-20">
+                            <Mail className="w-12 h-12 text-slate-300 mx-auto mb-3" />
+                            <h4 className="text-base font-bold text-slate-800">No Service Requests Found</h4>
+                            <p className="text-xs text-slate-500 mt-1">
+                              {isUserAdmin ? "All clear! No pending requests in the mailbox." : "You haven't submitted any service requests yet."}
+                            </p>
+                          </div>
+                        ) : (
+                          displayRequests.map(req => {
+                            const isMine = req.requestedBy?.toLowerCase() === user?.email?.toLowerCase();
                             const matchedBike = bikesList.find(b => b.id === req.bikeId);
+                            const bikeReg = req.bikeReg || (matchedBike ? matchedBike.regNo : `Bike #${req.bikeId}`);
+                            const matchedUser = usersList.find(u => u.email.toLowerCase() === req.requestedBy?.toLowerCase());
+                            const displayUser = matchedUser ? `${matchedUser.name} (${matchedUser.phoneNumber})` : req.requestedBy;
+
                             return (
-                              <tr key={req.id} className="hover:bg-slate-50/50 text-slate-700">
-                                <td className="px-6 py-4 whitespace-nowrap text-xs font-semibold text-slate-500">
-                                  {req.dateRequested}
-                                </td>
-                                <td className="px-6 py-4 whitespace-nowrap font-bold text-slate-900">
-                                  {req.bikeReg || (matchedBike ? matchedBike.regNo : `Bike #${req.bikeId}`)}
-                                </td>
-                                <td className="px-6 py-4 whitespace-nowrap text-xs text-slate-600 font-medium">
-                                  {req.requestedBy}
-                                </td>
-                                <td className="px-6 py-4 whitespace-nowrap text-xs font-bold text-blue-600">
-                                  <span className="bg-blue-50 px-2.5 py-1 rounded-lg border border-blue-100/50">
-                                    {req.serviceType}
-                                  </span>
-                                </td>
-                                <td className="px-6 py-4 max-w-xs truncate" title={req.problemDescription}>
-                                  {req.problemDescription}
-                                </td>
-                                <td className="px-6 py-4 whitespace-nowrap">
-                                  <span className={`inline-flex items-center gap-1 text-[10px] font-extrabold px-2.5 py-0.5 rounded-full ${req.status === "done" ? "bg-green-50 text-green-600" : req.status === "cancelled" ? "bg-slate-50 text-slate-500" : "bg-amber-50 text-amber-600"}`}>
-                                    {req.status === "done" ? (
-                                      <>
-                                        <CheckCircle className="w-3.5 h-3.5" />
-                                        Attended
-                                      </>
-                                    ) : req.status === "cancelled" ? (
-                                      "Cancelled"
-                                    ) : (
-                                      <>
-                                        <Clock className="w-3.5 h-3.5 animate-pulse" />
-                                        Pending
-                                      </>
-                                    )}
-                                  </span>
-                                </td>
-                                <td className="px-6 py-4 whitespace-nowrap text-center">
-                                  <div className="flex items-center justify-center gap-2">
+                              <div key={req.id} className={`flex ${isMine ? "justify-end" : "justify-start"}`}>
+                                <div className={`max-w-[80%] rounded-2xl p-4 shadow-sm border ${isMine ? "bg-blue-600 text-white border-blue-500 rounded-tr-sm" : "bg-white text-slate-800 border-slate-200 rounded-tl-sm"}`}>
+                                  <div className="flex justify-between items-start mb-2 gap-4">
+                                    <div className={`text-[10px] font-bold ${isMine ? "text-blue-200" : "text-slate-400"} uppercase tracking-wider`}>
+                                      {displayUser} • {req.dateRequested}
+                                    </div>
+                                    <span className={`inline-flex items-center gap-1 text-[9px] font-extrabold px-2 py-0.5 rounded-full ${req.status === "done" ? "bg-emerald-500/20 text-emerald-100" : req.status === "cancelled" ? "bg-slate-500/20 text-slate-100" : "bg-amber-500/20 text-amber-100"}`}>
+                                      {req.status}
+                                    </span>
+                                  </div>
+                                  <div className="mb-2">
+                                    <span className={`inline-block px-2 py-0.5 rounded text-[10px] font-bold mb-1 ${isMine ? "bg-blue-500 text-white" : "bg-slate-100 text-slate-600"}`}>
+                                      {bikeReg} - {req.serviceType}
+                                    </span>
+                                    <p className="text-sm">{req.problemDescription}</p>
+                                  </div>
+                                  <div className="flex justify-end gap-2 mt-3 pt-3 border-t border-white/10">
                                     {isUserAdmin && req.status === "pending" && (
                                       <button
                                         onClick={() => handleAttendRequest(req)}
-                                        className="bg-blue-600 hover:bg-blue-700 text-white font-semibold text-xs px-2.5 py-1 rounded-lg transition-colors cursor-pointer flex items-center gap-1 border border-blue-500/10"
-                                        title="Attend and Log Service"
+                                        className="bg-white text-blue-600 hover:bg-slate-50 font-bold text-[10px] px-3 py-1.5 rounded transition-colors cursor-pointer"
                                       >
-                                        Attend
+                                        Attend Issue
                                       </button>
                                     )}
-                                    {(isUserAdmin || req.requestedBy?.toLowerCase() === user?.email?.toLowerCase()) && (
+                                    {(isUserAdmin || isMine) && (
                                       <button
                                         onClick={() => handleDeleteRequest(req.id)}
-                                        className="p-1.5 text-rose-600 hover:bg-rose-50 rounded-lg cursor-pointer"
-                                        title={isUserAdmin ? "Delete Request" : "Cancel Request"}
+                                        className={`font-bold text-[10px] px-3 py-1.5 rounded transition-colors cursor-pointer ${isMine ? "bg-blue-700/50 hover:bg-blue-700 text-blue-100" : "bg-rose-50 hover:bg-rose-100 text-rose-600"}`}
                                       >
-                                        <Trash2 className="w-4 h-4" />
+                                        Delete
                                       </button>
                                     )}
                                   </div>
-                                </td>
-                              </tr>
+                                </div>
+                              </div>
                             );
-                          })}
-                        </tbody>
-                      </table>
+                          })
+                        )}
+                      </div>
+
+                      {/* Chat Input Area (For FEOs) */}
+                      {!isUserAdmin && (
+                        <div className="p-4 bg-white border-t border-slate-200">
+                          <button
+                            onClick={openRequestModal}
+                            className="w-full bg-slate-50 hover:bg-slate-100 border border-slate-200 text-slate-600 px-4 py-3 rounded-xl text-sm font-medium transition-all cursor-pointer flex items-center justify-between"
+                          >
+                            <span>Type a new service request...</span>
+                            <div className="bg-blue-600 text-white p-1.5 rounded-lg">
+                              <Plus className="w-4 h-4" />
+                            </div>
+                          </button>
+                        </div>
+                      )}
                     </div>
                   );
                 })()}
