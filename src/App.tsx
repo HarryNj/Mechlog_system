@@ -729,18 +729,33 @@ export default function App() {
         })
       });
       
+      let dataUser = null;
+      
       if (!res.ok) {
-        throw new Error("Failed to sync Google account with fleet database.");
+        console.warn("Failed to sync Google account with fleet database. Falling back to Firebase info.");
+        dataUser = {
+          uid: currentUser.uid,
+          email: currentUser.email,
+          role: "user",
+          name: currentUser.displayName || "",
+          phoneNumber: currentUser.phoneNumber || ""
+        };
+      } else {
+        const data = await res.json();
+        if (data.status === "success" && data.user) {
+          dataUser = data.user;
+        } else {
+          throw new Error(data.error || "Failed to sign in with Google.");
+        }
       }
       
-      const data = await res.json();
-      if (data.status === "success" && data.user) {
+      if (dataUser) {
         const sessionUser = {
-          uid: data.user.uid,
-          email: data.user.email,
-          name: data.user.name,
-          phoneNumber: data.user.phoneNumber,
-          role: data.user.role,
+          uid: dataUser.uid,
+          email: dataUser.email,
+          name: dataUser.name,
+          phoneNumber: dataUser.phoneNumber,
+          role: dataUser.role,
           token: token
         };
         
