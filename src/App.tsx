@@ -2624,7 +2624,7 @@ export default function App() {
                   <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
                   <input
                     type="text"
-                    placeholder="Search logs..."
+                    placeholder="Search by reg number, officer, or work done..."
                     value={logSearch}
                     onChange={(e) => setLogSearch(e.target.value)}
                     className="w-full pl-10 pr-4 py-2 rounded-xl border border-slate-200 text-sm focus:ring-2 focus:ring-blue-500 outline-none text-slate-700"
