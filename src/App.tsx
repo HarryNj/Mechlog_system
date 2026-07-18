@@ -1461,7 +1461,7 @@ export default function App() {
       <div className="min-h-screen bg-gradient-to-br from-emerald-50 via-green-50 to-emerald-100 flex items-center justify-center p-4 selection:bg-emerald-200/50 font-sans">
         <div className="w-full max-w-md animate-in fade-in zoom-in duration-500">
           <div className="text-center mb-6">
-            <div className="inline-flex p-3 bg-emerald-100/60 rounded-3xl mb-4 border border-emerald-500/20 backdrop-blur-sm">
+            <div className="inline-flex p-3 bg-emerald-100/60 rounded-3xl mb-4 backdrop-blur-sm">
               <img src={effLogo} alt="EFF Logo" className="w-16 h-16 object-contain mix-blend-multiply" referrerPolicy="no-referrer" />
             </div>
             
@@ -1470,17 +1470,15 @@ export default function App() {
               initial={{ opacity: 0, y: -10 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ duration: 0.8 }}
-              className="text-4xl font-extrabold text-emerald-950 tracking-tighter uppercase italic flex items-center justify-center gap-1.5"
+              className="text-4xl font-extrabold tracking-tighter uppercase italic flex items-center justify-center gap-1.5"
             >
               <motion.span 
                 animate={{ scale: [1, 1.05, 1], color: ["#047857", "#059669", "#047857"] }}
                 transition={{ repeat: Infinity, duration: 4, ease: "easeInOut" }}
+                className="font-black"
               >
-                EFF
+                EFF FLEET
               </motion.span>
-              <span className="text-slate-800 font-black relative">
-                Fleet
-              </span>
             </motion.h1>
             
             <p className="text-emerald-800/80 text-xs font-bold uppercase tracking-[0.25em] mt-2">
@@ -1497,10 +1495,7 @@ export default function App() {
               {/* Title Section based on Auth Mode */}
               <div className="text-center mb-6">
                 {authMode === "signin" && (
-                  <>
-                    <h2 className="text-2xl font-bold text-slate-800 tracking-tight">Sign in</h2>
-                    <p className="text-xs text-slate-500 mt-1 font-medium">Access the EFF Fleet mechanic log dashboard</p>
-                  </>
+                  <p className="text-xs text-slate-500 mt-1 font-medium">Access the EFF Fleet mechanic log dashboard</p>
                 )}
                 {authMode === "register" && (
                   <>
@@ -1702,18 +1697,6 @@ export default function App() {
               </div>
             </div>
           </div>
-
-          <div className="mt-8 text-center space-y-4">
-            <div className="text-[10px] font-bold text-slate-600 uppercase tracking-widest text-center">
-              EFF © {new Date().getFullYear()} Zambia.
-            </div>
-            <p className="text-[9px] font-black text-slate-400 uppercase tracking-[0.3em] text-center">
-              Security Matrix v2.0 // Federated System
-            </p>
-            <div className="flex items-center justify-center gap-6 opacity-45 grayscale hover:grayscale-0 hover:opacity-100 transition-all duration-500">
-              <img src="https://upload.wikimedia.org/wikipedia/commons/thumb/0/06/Flag_of_Zambia.svg/2000px-Flag_of_Zambia.svg.png" alt="Zambia" className="h-4 rounded-sm" referrerPolicy="no-referrer" />
-            </div>
-          </div>
         </div>
       </div>
     );
@@ -1737,8 +1720,8 @@ export default function App() {
                 <img src={effLogo} alt="EFF Logo" className="w-full h-full object-contain mix-blend-multiply" referrerPolicy="no-referrer" />
               </div>
               <div>
-                <h1 className="text-lg font-bold tracking-tight text-slate-800 uppercase leading-none">
-                  EFF <span className="text-emerald-600">Fleet</span>
+                <h1 className="text-lg font-bold tracking-tight text-emerald-600 uppercase leading-none">
+                  EFF Fleet
                 </h1>
                 <div className="flex items-center gap-1.5 mt-1">
                   <span className="w-1.5 h-1.5 bg-emerald-500 rounded-full shadow-[0_0_8px_rgba(16,185,129,0.5)]" />
