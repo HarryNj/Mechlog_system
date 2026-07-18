@@ -52,11 +52,11 @@ const mockFetch = async (url: string, options: any = {}) => {
     if (method === 'GET') {
       if (id) {
         const snap = await getDoc(doc(db, collectionName, id));
-        return { ok: true, json: async () => ({ id: snap.id, ...snap.data() }), status: 200 };
+        return { ok: true, json: async () => ({ id: snap.id, ...snap.data() }), status: 200, url };
       } else {
         const snap = await getDocs(collection(db, collectionName));
         const data = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-        return { ok: true, json: async () => data, status: 200 };
+        return { ok: true, json: async () => data, status: 200, url };
       }
     } else if (method === 'POST') {
       if (path === 'auth/sync') {
@@ -72,25 +72,25 @@ const mockFetch = async (url: string, options: any = {}) => {
           userData = { ...userSnap.data(), ...body, role: userSnap.data().role === 'admin' ? 'admin' : userData.role };
         }
         await setDoc(userRef, userData, { merge: true });
-        return { ok: true, json: async () => ({ status: 'success', user: { uid: userRef.id, ...userData } }), status: 200 };
+        return { ok: true, json: async () => ({ status: 'success', user: { uid: userRef.id, ...userData } }), status: 200, url };
       }
       
       const body = JSON.parse(options.body);
       // Auto generate ID
       const newRef = doc(collection(db, collectionName));
       await setDoc(newRef, body);
-      return { ok: true, json: async () => ({ id: newRef.id, ...body }), status: 200 };
+      return { ok: true, json: async () => ({ id: newRef.id, ...body }), status: 200, url };
     } else if (method === 'PUT') {
       const body = JSON.parse(options.body);
       await updateDoc(doc(db, collectionName, id), body);
-      return { ok: true, json: async () => ({ id, ...body }), status: 200 };
+      return { ok: true, json: async () => ({ id, ...body }), status: 200, url };
     } else if (method === 'DELETE') {
       await deleteDoc(doc(db, collectionName, id));
-      return { ok: true, json: async () => ({ status: 'success' }), status: 200 };
+      return { ok: true, json: async () => ({ status: 'success' }), status: 200, url };
     }
-  } catch (err) {
+  } catch (err: any) {
     console.error('Mock fetch error:', err);
-    return { ok: false, status: 500, statusText: err.message, json: async () => ({ error: err.message }) };
+    return { ok: false, status: 500, statusText: err.message, json: async () => ({ error: err.message }), url };
   }
 };
 
@@ -514,7 +514,7 @@ export default function App() {
   // Sync authenticated user to PostgreSQL database
   const syncUser = async (currentUser: FirebaseUser, overrideName?: string, overridePhone?: string) => {
     try {
-      const token = await currentUser.getIdToken();
+      const token = "dummy-token";
       const res = await mockFetch("/api/auth/sync", {
         method: "POST",
         headers: {
@@ -548,7 +548,7 @@ export default function App() {
     if (!currentUser) return;
     if (!isSilent) setSyncing(true);
     try {
-      const token = await currentUser.getIdToken();
+      const token = "dummy-token";
       const headers = { "Authorization": `Bearer ${token}` };
 
       const lowerEmail = currentUser.email?.toLowerCase() || "";
@@ -655,14 +655,17 @@ export default function App() {
     setAuthError("");
     setAuthSuccess("");
     try {
-      const res = await mockFetch("/api/auth/custom-login", {
+      const userCredential = await signInWithEmailAndPassword(auth, authEmail, authPassword);
+      const currentUser = userCredential.user;
+
+      const res = await mockFetch("/api/auth/sync", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email: authEmail, password: authPassword })
+        body: JSON.stringify({ email: currentUser.email })
       });
       const data = await res.json();
       if (!res.ok) {
-        throw new Error(data.error || "Failed to sign in");
+        throw new Error(data.error || "Failed to sync user data");
       }
       
       const sessionUser = {
@@ -671,7 +674,7 @@ export default function App() {
         name: data.user.name,
         phoneNumber: data.user.phoneNumber,
         role: data.user.role,
-        token: data.token
+        token: "dummy-token"
       };
 
       // Set session persistently in localStorage
@@ -728,7 +731,7 @@ export default function App() {
     try {
       const result = await signInWithPopup(auth, googleAuthProvider);
       const currentUser = result.user;
-      const token = await currentUser.getIdToken();
+      const token = "dummy-token";
       
       let res;
       try {
@@ -824,7 +827,7 @@ export default function App() {
       const userCredential = await createUserWithEmailAndPassword(auth, authEmail, authPassword);
       const currentUser = userCredential.user;
       await updateProfile(currentUser, { displayName: authName });
-      const token = await currentUser.getIdToken();
+      const token = "dummy-token";
 
       const res = await mockFetch("/api/auth/sync", {
         method: "POST",
@@ -900,7 +903,7 @@ export default function App() {
     e.preventDefault();
     if (!user) return;
 
-    const token = await user.getIdToken();
+    const token = "dummy-token";
     const url = editingUser ? `/api/users/${editingUser.id}` : "/api/users";
     const method = editingUser ? "PUT" : "POST";
 
@@ -930,7 +933,7 @@ export default function App() {
     if (!user || !confirm("Are you sure you want to delete this user account?")) return;
 
     try {
-      const token = await user.getIdToken();
+      const token = "dummy-token";
       const res = await offlineFetch(`/api/users/${userId}`, { method: "DELETE",
         headers: {
           "Authorization": `Bearer ${token}`
@@ -961,7 +964,7 @@ export default function App() {
     e.preventDefault();
     if (!user) return;
 
-    const token = await user.getIdToken();
+    const token = "dummy-token";
     try {
       const res = await offlineFetch("/api/requests", {
         method: "POST",
@@ -992,7 +995,7 @@ export default function App() {
     if (!user || !confirm("Are you sure you want to delete/cancel this service request?")) return;
 
     try {
-      const token = await user.getIdToken();
+      const token = "dummy-token";
       const res = await offlineFetch(`/api/requests/${requestId}`, { method: "DELETE",
         headers: {
           "Authorization": `Bearer ${token}`
@@ -1015,7 +1018,7 @@ export default function App() {
     if (!user) return;
     
     // Set request status to "done" in database first
-    const token = await user.getIdToken();
+    const token = "dummy-token";
     try {
       await offlineFetch(`/api/requests/${reqObj.id}`, { method: "PUT",
         headers: {
@@ -1073,7 +1076,7 @@ export default function App() {
     e.preventDefault();
     if (!user) return;
 
-    const token = await user.getIdToken();
+    const token = "dummy-token";
     const url = editingBike ? `/api/bikes/${editingBike.id}` : "/api/bikes";
     const method = editingBike ? "PUT" : "POST";
 
@@ -1106,7 +1109,7 @@ export default function App() {
   const handleDeleteBike = async (id: number) => {
     if (!confirm("Are you sure you want to delete this bike? All associated service logs will be permanently deleted.") || !user) return;
     try {
-      const token = await user.getIdToken();
+      const token = "dummy-token";
       await offlineFetch(`/api/bikes/${id}`, { method: "DELETE",
         headers: { "Authorization": `Bearer ${token}` }
       });
@@ -1140,7 +1143,7 @@ export default function App() {
     e.preventDefault();
     if (!user) return;
 
-    const token = await user.getIdToken();
+    const token = "dummy-token";
     const url = editingSpare ? `/api/spares/${editingSpare.id}` : "/api/spares";
     const method = editingSpare ? "PUT" : "POST";
 
@@ -1169,7 +1172,7 @@ export default function App() {
   const handleDeleteSpare = async (id: number) => {
     if (!confirm("Are you sure you want to remove this spare from inventory?") || !user) return;
     try {
-      const token = await user.getIdToken();
+      const token = "dummy-token";
       await offlineFetch(`/api/spares/${id}`, { method: "DELETE",
         headers: { "Authorization": `Bearer ${token}` }
       });
@@ -1247,7 +1250,7 @@ export default function App() {
       }
     }
 
-    const token = await user.getIdToken();
+    const token = "dummy-token";
     const url = editingLog ? `/api/logs/${editingLog.id}` : "/api/logs";
     const method = editingLog ? "PUT" : "POST";
 
@@ -1289,7 +1292,7 @@ export default function App() {
   const handleDeleteLog = async (id: number) => {
     if (!confirm("Are you sure you want to delete this service log? Used spares will be returned to inventory.") || !user) return;
     try {
-      const token = await user.getIdToken();
+      const token = "dummy-token";
       await offlineFetch(`/api/logs/${id}`, { method: "DELETE",
         headers: { "Authorization": `Bearer ${token}` }
       });
