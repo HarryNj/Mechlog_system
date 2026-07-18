@@ -649,7 +649,87 @@ export default function App() {
   // Handle Password Reset Email
   const handleForgotPassword = async (e: React.FormEvent) => {
     e.preventDefault();
-    setAuthError("Password reset is currently handled by system administration. Please contact Harrison Njobvu (harrisonnjobvu@gmail.com) for password overrides.");
+    if (!authEmail) {
+      setAuthError("Please enter your email address to receive a password reset link");
+      return;
+    }
+    setAuthLoading(true);
+    setAuthError("");
+    setAuthSuccess("");
+    try {
+      await sendPasswordResetEmail(auth, authEmail);
+      setAuthSuccess(`Password reset email has been sent successfully to ${authEmail}! Please check your inbox and follow the instructions.`);
+    } catch (err: any) {
+      console.warn("Firebase password reset warning:", err);
+      setAuthError(`Password reset request submitted. If this is a PostgreSQL-only account, please contact Harrison Njobvu (harrisonnjobvu@gmail.com) for direct password overrides.`);
+    } finally {
+      setAuthLoading(false);
+    }
+  };
+
+  // Handle Google Sign-In
+  const handleGoogleSignIn = async () => {
+    setAuthLoading(true);
+    setAuthError("");
+    setAuthSuccess("");
+    try {
+      const result = await signInWithPopup(auth, googleAuthProvider);
+      const currentUser = result.user;
+      const token = await currentUser.getIdToken();
+      
+      const res = await fetch("/api/auth/sync", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${token}`
+        },
+        body: JSON.stringify({
+          name: currentUser.displayName,
+          email: currentUser.email,
+          phoneNumber: currentUser.phoneNumber || ""
+        })
+      });
+      
+      if (!res.ok) {
+        throw new Error("Failed to sync Google account with fleet database.");
+      }
+      
+      const data = await res.json();
+      if (data.status === "success" && data.user) {
+        const sessionUser = {
+          uid: data.user.uid,
+          email: data.user.email,
+          name: data.user.name,
+          phoneNumber: data.user.phoneNumber,
+          role: data.user.role,
+          token: token
+        };
+        
+        localStorage.setItem("eff_user_session", JSON.stringify(sessionUser));
+        
+        const customUser = {
+          uid: sessionUser.uid,
+          email: sessionUser.email,
+          displayName: sessionUser.name,
+          name: sessionUser.name,
+          phoneNumber: sessionUser.phoneNumber,
+          token: sessionUser.token,
+          getIdToken: async () => sessionUser.token
+        };
+        
+        setUser(customUser as any);
+        setDbUser(sessionUser);
+        setAuthSuccess("Google Sign-In successful!");
+        await fetchData(customUser as any, sessionUser);
+      } else {
+        throw new Error("Invalid response from sync endpoint.");
+      }
+    } catch (err: any) {
+      console.error("Google Sign-In failed:", err);
+      setAuthError(err.message || "Google Authentication failed. Please try again.");
+    } finally {
+      setAuthLoading(false);
+    }
   };
 
   // Handle Email/Password/Name/Phone Register (Custom Secure Relational DB Registration)
@@ -1349,88 +1429,119 @@ export default function App() {
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-slate-50 flex flex-col items-center justify-center p-4">
-        <div className="animate-spin rounded-full h-12 w-12 border-4 border-blue-600 border-t-transparent mb-4"></div>
-        <p className="text-slate-600 font-medium">Loading Mechanic Spare Log System...</p>
+      <div className="min-h-screen bg-emerald-50 flex flex-col items-center justify-center p-4">
+        <div className="animate-spin rounded-full h-12 w-12 border-4 border-emerald-600 border-t-transparent mb-4"></div>
+        <p className="text-emerald-800 font-bold tracking-wide">Loading EFF Fleet Intelligence System...</p>
       </div>
     );
   }
 
   if (!user) {
     return (
-      <div className="min-h-screen bg-[#0a0f1d] flex items-center justify-center p-4 selection:bg-blue-500/30 font-sans">
-        <div className="w-full max-w-md animate-in fade-in zoom-in duration-300">
-          <div className="text-center mb-8">
-            <div className="inline-flex p-4 bg-white rounded-3xl mb-4 shadow-[0_0_30px_rgba(255,255,255,0.1)] border border-slate-800">
-              <img src={effLogo} alt="EFF Logo" className="w-16 h-16 object-contain" referrerPolicy="no-referrer" />
+      <div className="min-h-screen bg-gradient-to-br from-emerald-50 via-green-50 to-emerald-100 flex items-center justify-center p-4 selection:bg-emerald-200/50 font-sans">
+        <div className="w-full max-w-md animate-in fade-in zoom-in duration-500">
+          <div className="text-center mb-6">
+            <div className="inline-flex p-3 bg-emerald-100/60 rounded-3xl mb-4 border border-emerald-500/20 shadow-sm backdrop-blur-sm">
+              <img src={effLogo} alt="EFF Logo" className="w-16 h-16 object-contain mix-blend-multiply" referrerPolicy="no-referrer" />
             </div>
-            <h1 className="text-3xl font-black text-white tracking-tighter uppercase italic text-center">
-              EFF <span className="text-blue-500">Fleet</span>
-            </h1>
-            <p className="text-slate-500 text-xs font-bold uppercase tracking-[0.2em] mt-2 text-center">
+            
+            {/* Animated Brand Header */}
+            <motion.h1 
+              initial={{ opacity: 0, y: -10 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.8 }}
+              className="text-4xl font-extrabold text-emerald-950 tracking-tighter uppercase italic flex items-center justify-center gap-1.5"
+            >
+              <motion.span 
+                animate={{ scale: [1, 1.05, 1], color: ["#047857", "#059669", "#047857"] }}
+                transition={{ repeat: Infinity, duration: 4, ease: "easeInOut" }}
+              >
+                EFF
+              </motion.span>
+              <span className="text-slate-800 font-black relative">
+                Fleet
+                <motion.span 
+                  className="absolute bottom-0 left-0 h-1 bg-emerald-600 rounded-full"
+                  initial={{ width: 0 }}
+                  animate={{ width: "100%" }}
+                  transition={{ delay: 0.3, duration: 0.8 }}
+                />
+              </span>
+            </motion.h1>
+            
+            <p className="text-emerald-800/80 text-xs font-bold uppercase tracking-[0.25em] mt-2">
               Mechanic Spare Log System
             </p>
           </div>
 
-          <div className="bg-[#0d1425] p-8 rounded-[2rem] border border-blue-500/10 shadow-[0_20px_50px_rgba(0,0,0,0.3)] backdrop-blur-xl relative overflow-hidden group">
-            <div className="absolute -top-24 -right-24 w-48 h-48 bg-blue-600/10 blur-[80px] rounded-full group-hover:bg-blue-600/20 transition-all duration-700" />
-            <div className="absolute -bottom-24 -left-24 w-48 h-48 bg-emerald-600/10 blur-[80px] rounded-full group-hover:bg-emerald-600/20 transition-all duration-700" />
+          <div className="bg-white/90 p-8 rounded-[2rem] border border-emerald-500/10 shadow-[0_20px_50px_rgba(4,120,87,0.08)] backdrop-blur-xl relative overflow-hidden group">
+            <div className="absolute -top-24 -right-24 w-48 h-48 bg-emerald-500/5 blur-[80px] rounded-full" />
+            <div className="absolute -bottom-24 -left-24 w-48 h-48 bg-green-500/5 blur-[80px] rounded-full" />
 
             <div className="relative z-10">
-              <div className="flex bg-[#0a0f1d] p-1.5 rounded-2xl mb-8 border border-blue-500/10">
-                <button
-                  onClick={() => { setAuthMode("signin"); setAuthError(""); }}
-                  className={`flex-1 py-3 text-[10px] font-black uppercase tracking-widest rounded-xl transition-all duration-300 ${authMode === "signin" ? "bg-blue-600 text-white shadow-[0_0_20px_rgba(37,99,235,0.4)]" : "text-slate-500 hover:text-slate-300"}`}
-                >
-                  Auth Login
-                </button>
-                <button
-                  onClick={() => { setAuthMode("register"); setAuthError(""); }}
-                  className={`flex-1 py-3 text-[10px] font-black uppercase tracking-widest rounded-xl transition-all duration-300 ${authMode === "register" ? "bg-blue-600 text-white shadow-[0_0_20px_rgba(37,99,235,0.4)]" : "text-slate-500 hover:text-slate-300"}`}
-                >
-                  New Registry
-                </button>
-              </div>
+              
+              {/* Only show Tabs if we are not in forgot password mode */}
+              {authMode !== "forgot" ? (
+                <div className="flex bg-emerald-100/40 p-1.5 rounded-2xl mb-6 border border-emerald-500/5">
+                  <button
+                    onClick={() => { setAuthMode("signin"); setAuthError(""); setAuthSuccess(""); }}
+                    className={`flex-1 py-3 text-[10px] font-black uppercase tracking-widest rounded-xl transition-all duration-300 cursor-pointer ${authMode === "signin" ? "bg-emerald-600 text-white shadow-md" : "text-slate-500 hover:text-slate-700"}`}
+                  >
+                    Auth Login
+                  </button>
+                  <button
+                    onClick={() => { setAuthMode("register"); setAuthError(""); setAuthSuccess(""); }}
+                    className={`flex-1 py-3 text-[10px] font-black uppercase tracking-widest rounded-xl transition-all duration-300 cursor-pointer ${authMode === "register" ? "bg-emerald-600 text-white shadow-md" : "text-slate-500 hover:text-slate-700"}`}
+                  >
+                    New Registry
+                  </button>
+                </div>
+              ) : (
+                <div className="text-center mb-6">
+                  <h2 className="text-sm font-bold text-slate-800 uppercase tracking-widest">Reset Access Credentials</h2>
+                  <p className="text-[10px] text-slate-500 mt-1">Provide your email address to recover your password</p>
+                </div>
+              )}
 
               {authError && (
-                <div className="mb-6 p-4 bg-rose-500/10 border border-rose-500/20 rounded-2xl flex items-center gap-3 animate-in slide-in-from-top-2 duration-300">
+                <div className="mb-6 p-4 bg-rose-50 border border-rose-100 rounded-2xl flex items-center gap-3 animate-in slide-in-from-top-2 duration-300">
                   <AlertCircle className="w-5 h-5 text-rose-500 flex-shrink-0" />
-                  <p className="text-xs font-bold text-rose-200 leading-relaxed">{authError}</p>
+                  <p className="text-xs font-semibold text-rose-800 leading-relaxed">{authError}</p>
                 </div>
               )}
 
               {authSuccess && (
-                <div className="mb-6 p-4 bg-emerald-500/10 border border-emerald-500/20 rounded-2xl flex items-center gap-3 animate-in slide-in-from-top-2 duration-300">
-                  <CheckCircle className="w-5 h-5 text-emerald-500 flex-shrink-0" />
-                  <p className="text-xs font-bold text-emerald-200 leading-relaxed">{authSuccess}</p>
+                <div className="mb-6 p-4 bg-emerald-50 border border-emerald-100 rounded-2xl flex items-center gap-3 animate-in slide-in-from-top-2 duration-300">
+                  <CheckCircle className="w-5 h-5 text-emerald-600 flex-shrink-0" />
+                  <p className="text-xs font-semibold text-emerald-800 leading-relaxed">{authSuccess}</p>
                 </div>
               )}
 
-              <form onSubmit={authMode === "signin" ? handleEmailSignIn : authMode === "register" ? handleEmailRegister : handleForgotPassword} className="space-y-5">
+              <form onSubmit={authMode === "signin" ? handleEmailSignIn : authMode === "register" ? handleEmailRegister : handleForgotPassword} className="space-y-4">
                 {authMode === "register" && (
                   <div className="space-y-4">
                     <div className="group relative">
                       <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none">
-                        <User className="h-4 w-4 text-slate-500 group-focus-within:text-blue-500 transition-colors" />
+                        <User className="h-4 w-4 text-slate-400 group-focus-within:text-emerald-600 transition-colors" />
                       </div>
                       <input
                         type="text"
                         placeholder="FULL LEGAL NAME"
                         value={authName}
                         onChange={(e) => setAuthName(e.target.value)}
-                        className="block w-full pl-11 pr-4 py-4 bg-[#0a0f1d] border border-blue-500/10 rounded-2xl text-xs font-black text-white placeholder-slate-600 focus:outline-none focus:ring-2 focus:ring-blue-500/50 focus:border-blue-500 transition-all uppercase tracking-widest"
+                        className="block w-full pl-11 pr-4 py-3.5 bg-slate-50/60 border border-slate-200 focus:border-emerald-500 rounded-2xl text-xs font-semibold text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 transition-all uppercase tracking-widest"
                       />
                     </div>
                     <div className="group relative">
                       <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none">
-                        <Phone className="h-4 w-4 text-slate-500 group-focus-within:text-blue-500 transition-colors" />
+                        <Phone className="h-4 w-4 text-slate-400 group-focus-within:text-emerald-600 transition-colors" />
                       </div>
                       <input
                         type="tel"
                         placeholder="PHONE NUMBER (+260...)"
                         value={authPhone}
                         onChange={(e) => setAuthPhone(e.target.value)}
-                        className="block w-full pl-11 pr-4 py-4 bg-[#0a0f1d] border border-blue-500/10 rounded-2xl text-xs font-black text-white placeholder-slate-600 focus:outline-none focus:ring-2 focus:ring-blue-500/50 focus:border-blue-500 transition-all tracking-widest"
+                        className="block w-full pl-11 pr-4 py-3.5 bg-slate-50/60 border border-slate-200 focus:border-emerald-500 rounded-2xl text-xs font-semibold text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 transition-all tracking-widest"
                       />
                     </div>
                   </div>
@@ -1438,67 +1549,117 @@ export default function App() {
 
                 <div className="group relative">
                   <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none">
-                    <Mail className="h-4 w-4 text-slate-500 group-focus-within:text-blue-500 transition-colors" />
+                    <Mail className="h-4 w-4 text-slate-400 group-focus-within:text-emerald-600 transition-colors" />
                   </div>
                   <input
                     type="email"
                     placeholder="EMAIL ADDRESS"
                     value={authEmail}
                     onChange={(e) => setAuthEmail(e.target.value)}
-                    className="block w-full pl-11 pr-4 py-4 bg-[#0a0f1d] border border-blue-500/10 rounded-2xl text-xs font-black text-white placeholder-slate-600 focus:outline-none focus:ring-2 focus:ring-blue-500/50 focus:border-blue-500 transition-all uppercase tracking-widest"
+                    className="block w-full pl-11 pr-4 py-3.5 bg-slate-50/60 border border-slate-200 focus:border-emerald-500 rounded-2xl text-xs font-semibold text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 transition-all uppercase tracking-widest"
                   />
                 </div>
 
-                <div className="group relative">
-                  <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none">
-                    <Lock className="h-4 w-4 text-slate-500 group-focus-within:text-blue-500 transition-colors" />
+                {authMode !== "forgot" && (
+                  <div className="group relative">
+                    <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none">
+                      <Lock className="h-4 w-4 text-slate-400 group-focus-within:text-emerald-600 transition-colors" />
+                    </div>
+                    <input
+                      type="password"
+                      placeholder="PASSWORD"
+                      value={authPassword}
+                      onChange={(e) => setAuthPassword(e.target.value)}
+                      className="block w-full pl-11 pr-4 py-3.5 bg-slate-50/60 border border-slate-200 focus:border-emerald-500 rounded-2xl text-xs font-semibold text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 transition-all tracking-widest"
+                    />
                   </div>
-                  <input
-                    type="password"
-                    placeholder="PASSWORD"
-                    value={authPassword}
-                    onChange={(e) => setAuthPassword(e.target.value)}
-                    className="block w-full pl-11 pr-4 py-4 bg-[#0a0f1d] border border-blue-500/10 rounded-2xl text-xs font-black text-white placeholder-slate-600 focus:outline-none focus:ring-2 focus:ring-blue-500/50 focus:border-blue-500 transition-all tracking-widest"
-                  />
-                </div>
+                )}
 
                 <button
                   type="submit"
                   disabled={authLoading}
-                  className="w-full py-4 bg-blue-600 hover:bg-blue-500 disabled:bg-slate-800 disabled:text-slate-500 text-white rounded-2xl text-xs font-black uppercase tracking-[0.2em] shadow-[0_15px_30px_rgba(37,99,235,0.3)] hover:shadow-[0_15px_40px_rgba(37,99,235,0.5)] transition-all duration-300 disabled:shadow-none flex items-center justify-center gap-2 group cursor-pointer border border-blue-400/30"
+                  className="w-full py-3.5 bg-emerald-600 hover:bg-emerald-500 disabled:bg-slate-200 disabled:text-slate-400 text-white rounded-2xl text-xs font-black uppercase tracking-[0.2em] shadow-sm hover:shadow transition-all duration-300 disabled:shadow-none flex items-center justify-center gap-2 group cursor-pointer"
                 >
                   {authLoading ? (
                     <>
                       <RefreshCw className="w-4 h-4 animate-spin" />
-                      Decrypting...
+                      Loading...
                     </>
                   ) : (
                     <>
-                      {authMode === "signin" ? "Initialize Session" : authMode === "register" ? "Create Account" : "Reset Data"}
+                      {authMode === "signin" ? "Initialize Session" : authMode === "register" ? "Create Account" : "Send Reset Link"}
                       <ArrowRight className="w-4 h-4 group-hover:translate-x-1 transition-transform" />
                     </>
                   )}
                 </button>
               </form>
 
-              {authMode === "signin" && (
-                <div className="mt-6 text-center">
+              {/* Federated Login Methods */}
+              {authMode !== "forgot" && (
+                <>
+                  <div className="relative flex py-4 items-center">
+                    <div className="flex-grow border-t border-slate-200"></div>
+                    <span className="flex-shrink mx-4 text-[9px] font-bold text-slate-400 uppercase tracking-widest">or continue with</span>
+                    <div className="flex-grow border-t border-slate-200"></div>
+                  </div>
+
                   <button
-                    onClick={() => setAuthMode("forgot")}
-                    className="text-[10px] font-black text-slate-600 hover:text-blue-500 uppercase tracking-widest transition-colors cursor-pointer"
+                    type="button"
+                    onClick={handleGoogleSignIn}
+                    disabled={authLoading}
+                    className="w-full py-3.5 bg-white hover:bg-slate-50 border border-slate-200 hover:border-emerald-200 text-slate-700 rounded-2xl text-xs font-bold uppercase tracking-widest shadow-sm hover:shadow transition-all duration-300 flex items-center justify-center gap-3 cursor-pointer disabled:opacity-50"
                   >
-                    Forgot access credentials?
+                    <svg className="w-4 h-4" viewBox="0 0 24 24">
+                      <path
+                        fill="#EA4335"
+                        d="M12 5.04c1.61 0 3.05.55 4.19 1.63l3.12-3.12C17.43 1.83 14.93 1 12 1 7.35 1 3.4 3.65 1.5 7.5l3.6 2.8C6.01 7.14 8.78 5.04 12 5.04z"
+                      />
+                      <path
+                        fill="#4285F4"
+                        d="M23.49 12.27c0-.81-.07-1.59-.2-2.35H12v4.45h6.45c-.28 1.48-1.11 2.73-2.35 3.56l3.6 2.8c2.1-1.94 3.79-5.11 3.79-8.46z"
+                      />
+                      <path
+                        fill="#FBBC05"
+                        d="M5.1 14.7c-.24-.73-.38-1.5-.38-2.3s.14-1.57.38-2.3L1.5 7.3C.54 9.22 0 11.38 0 13.7s.54 4.48 1.5 6.4l3.6-2.8z"
+                      />
+                      <path
+                        fill="#34A853"
+                        d="M12 23c3.24 0 5.96-1.07 7.95-2.91l-3.6-2.8c-1.11.74-2.53 1.19-4.35 1.19-3.22 0-5.99-2.1-6.96-5.26l-3.6 2.8C3.4 20.35 7.35 23 12 23z"
+                      />
+                    </svg>
+                    Sign in with Google
                   </button>
-                </div>
+                </>
               )}
+
+              <div className="mt-6 text-center flex flex-col gap-2">
+                {authMode === "signin" ? (
+                  <button
+                    onClick={() => { setAuthMode("forgot"); setAuthError(""); setAuthSuccess(""); }}
+                    className="text-[10px] font-black text-slate-500 hover:text-emerald-600 uppercase tracking-widest transition-colors cursor-pointer"
+                  >
+                    Forgot password?
+                  </button>
+                ) : (
+                  <button
+                    onClick={() => { setAuthMode("signin"); setAuthError(""); setAuthSuccess(""); }}
+                    className="text-[10px] font-black text-slate-500 hover:text-emerald-600 uppercase tracking-widest transition-colors cursor-pointer"
+                  >
+                    Back to login
+                  </button>
+                )}
+              </div>
             </div>
           </div>
 
           <div className="mt-8 text-center space-y-4">
-            <p className="text-[9px] font-black text-slate-600 uppercase tracking-[0.3em] text-center">
+            <div className="text-[10px] font-bold text-slate-600 uppercase tracking-widest text-center">
+              EFF © {new Date().getFullYear()} Zambia.
+            </div>
+            <p className="text-[9px] font-black text-slate-400 uppercase tracking-[0.3em] text-center">
               Security Matrix v2.0 // Federated System
             </p>
-            <div className="flex items-center justify-center gap-6 opacity-30 grayscale hover:grayscale-0 hover:opacity-100 transition-all duration-500">
+            <div className="flex items-center justify-center gap-6 opacity-45 grayscale hover:grayscale-0 hover:opacity-100 transition-all duration-500">
               <img src="https://upload.wikimedia.org/wikipedia/commons/thumb/0/06/Flag_of_Zambia.svg/2000px-Flag_of_Zambia.svg.png" alt="Zambia" className="h-4 rounded-sm" referrerPolicy="no-referrer" />
             </div>
           </div>
@@ -1512,21 +1673,21 @@ export default function App() {
   const lowerEmail = dbUser?.email?.toLowerCase() || "";
 
   return (
-    <div className="min-h-screen bg-[#0a0f1d] flex flex-col md:flex-row text-slate-200 selection:bg-blue-500/30">
+    <div className="min-h-screen bg-emerald-50/40 flex flex-col md:flex-row text-slate-800 selection:bg-emerald-200/50">
       
       {/* Responsive Sidebar for Desktop / Header Drawer for Mobile */}
-      <aside className={`fixed md:sticky top-0 left-0 z-50 h-screen w-72 bg-[#0d1425] border-r border-blue-500/10 transition-transform duration-300 ease-out flex flex-col justify-between
+      <aside className={`fixed md:sticky top-0 left-0 z-50 h-screen w-72 bg-white border-r border-emerald-500/10 transition-transform duration-300 ease-out flex flex-col justify-between shadow-sm
           ${sidebarOpen ? "translate-x-0" : "-translate-x-full md:translate-x-0"}`}>
         <div>
           {/* Brand Logo */}
-          <div className="p-6 border-b border-blue-500/10 flex items-center justify-between bg-blue-500/5">
+          <div className="p-6 border-b border-emerald-500/10 flex items-center justify-between bg-emerald-500/5">
             <div className="flex items-center gap-3">
-              <div className="w-10 h-10 bg-white rounded-xl flex items-center justify-center overflow-hidden border border-slate-800 p-1 shadow-[0_0_15px_rgba(255,255,255,0.1)]">
-                <img src={effLogo} alt="EFF Logo" className="w-full h-full object-contain" referrerPolicy="no-referrer" />
+              <div className="w-10 h-10 flex items-center justify-center overflow-hidden p-0.5">
+                <img src={effLogo} alt="EFF Logo" className="w-full h-full object-contain mix-blend-multiply" referrerPolicy="no-referrer" />
               </div>
               <div>
-                <h1 className="text-lg font-bold tracking-tight text-white uppercase leading-none">
-                  EFF <span className="text-blue-500">Fleet</span>
+                <h1 className="text-lg font-bold tracking-tight text-slate-800 uppercase leading-none">
+                  EFF <span className="text-emerald-600">Fleet</span>
                 </h1>
                 <div className="flex items-center gap-1.5 mt-1">
                   <span className="w-1.5 h-1.5 bg-emerald-500 rounded-full shadow-[0_0_8px_rgba(16,185,129,0.5)]" />
@@ -1541,7 +1702,7 @@ export default function App() {
                   <AlertCircle className="w-4 h-4" />
                 </div>
               )}
-              <button onClick={() => setSidebarOpen(false)} className="md:hidden text-slate-400 hover:text-white transition-colors">
+              <button onClick={() => setSidebarOpen(false)} className="md:hidden text-slate-400 hover:text-emerald-700 transition-colors">
                 <X className="w-5 h-5" />
               </button>
             </div>
@@ -1552,18 +1713,18 @@ export default function App() {
             <button
               onClick={() => { setActiveTab("dashboard"); setSidebarOpen(false); }}
               id="tab-btn-dashboard"
-              className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-[11px] font-bold uppercase tracking-widest transition-all duration-300 group ${activeTab === "dashboard" ? "bg-blue-600 text-white shadow-[0_0_20px_rgba(37,99,235,0.4)] ring-1 ring-blue-400/50" : "text-slate-500 hover:bg-blue-500/5 hover:text-slate-200"}`}
+              className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-[11px] font-bold uppercase tracking-widest transition-all duration-300 group ${activeTab === "dashboard" ? "bg-emerald-600 text-white shadow-[0_0_20px_rgba(16,185,129,0.3)] ring-1 ring-emerald-400/50" : "text-slate-500 hover:bg-emerald-50 hover:text-emerald-700"}`}
             >
-              <LayoutDashboard className={`w-4 h-4 ${activeTab === "dashboard" ? "text-white" : "text-slate-600 group-hover:text-blue-500"}`} />
+              <LayoutDashboard className={`w-4 h-4 ${activeTab === "dashboard" ? "text-white" : "text-slate-500 group-hover:text-emerald-600"}`} />
               Dashboard
             </button>
 
             <button
               onClick={() => { setActiveTab("requests"); setSidebarOpen(false); }}
               id="tab-btn-requests"
-              className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-[11px] font-bold uppercase tracking-widest transition-all duration-300 group ${activeTab === "requests" ? "bg-blue-600 text-white shadow-[0_0_20px_rgba(37,99,235,0.4)] ring-1 ring-blue-400/50" : "text-slate-500 hover:bg-blue-500/5 hover:text-slate-200"}`}
+              className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-[11px] font-bold uppercase tracking-widest transition-all duration-300 group ${activeTab === "requests" ? "bg-emerald-600 text-white shadow-[0_0_20px_rgba(16,185,129,0.3)] ring-1 ring-emerald-400/50" : "text-slate-500 hover:bg-emerald-50 hover:text-emerald-700"}`}
             >
-              <Mail className={`w-4 h-4 ${activeTab === "requests" ? "text-white" : "text-slate-600 group-hover:text-blue-500"}`} />
+              <Mail className={`w-4 h-4 ${activeTab === "requests" ? "text-white" : "text-slate-500 group-hover:text-emerald-600"}`} />
               <span>{isUserAdmin ? "Service Mailbox" : "My Requests"}</span>
               {isUserAdmin && requestsList.filter(r => r.status === "pending").length > 0 && (
                 <span className="ml-auto bg-amber-500 text-slate-950 text-[10px] font-bold px-2 py-0.5 rounded shadow-[0_0_10px_rgba(245,158,11,0.5)]">
@@ -1577,33 +1738,33 @@ export default function App() {
                 <button
                   onClick={() => { setActiveTab("logs"); setSidebarOpen(false); }}
                   id="tab-btn-logs"
-                  className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-[11px] font-bold uppercase tracking-widest transition-all duration-300 group ${activeTab === "logs" ? "bg-blue-600 text-white shadow-[0_0_20px_rgba(37,99,235,0.4)] ring-1 ring-blue-400/50" : "text-slate-500 hover:bg-blue-500/5 hover:text-slate-200"}`}
+                  className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-[11px] font-bold uppercase tracking-widest transition-all duration-300 group ${activeTab === "logs" ? "bg-emerald-600 text-white shadow-[0_0_20px_rgba(16,185,129,0.3)] ring-1 ring-emerald-400/50" : "text-slate-500 hover:bg-emerald-50 hover:text-emerald-700"}`}
                 >
-                  <ClipboardList className={`w-4 h-4 ${activeTab === "logs" ? "text-white" : "text-slate-600 group-hover:text-blue-500"}`} />
+                  <ClipboardList className={`w-4 h-4 ${activeTab === "logs" ? "text-white" : "text-slate-500 group-hover:text-emerald-600"}`} />
                   Service Logs
                 </button>
                 <button
                   onClick={() => { setActiveTab("bikes"); setSidebarOpen(false); }}
                   id="tab-btn-bikes"
-                  className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-[11px] font-bold uppercase tracking-widest transition-all duration-300 group ${activeTab === "bikes" ? "bg-blue-600 text-white shadow-[0_0_20px_rgba(37,99,235,0.4)] ring-1 ring-blue-400/50" : "text-slate-500 hover:bg-blue-500/5 hover:text-slate-200"}`}
+                  className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-[11px] font-bold uppercase tracking-widest transition-all duration-300 group ${activeTab === "bikes" ? "bg-emerald-600 text-white shadow-[0_0_20px_rgba(16,185,129,0.3)] ring-1 ring-emerald-400/50" : "text-slate-500 hover:bg-emerald-50 hover:text-emerald-700"}`}
                 >
-                  <Bike className={`w-4 h-4 ${activeTab === "bikes" ? "text-white" : "text-slate-600 group-hover:text-blue-500"}`} />
+                  <Bike className={`w-4 h-4 ${activeTab === "bikes" ? "text-white" : "text-slate-500 group-hover:text-emerald-600"}`} />
                   Bike Registry
                 </button>
                 <button
                   onClick={() => { setActiveTab("spares"); setSidebarOpen(false); }}
                   id="tab-btn-spares"
-                  className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-[11px] font-bold uppercase tracking-widest transition-all duration-300 group ${activeTab === "spares" ? "bg-blue-600 text-white shadow-[0_0_20px_rgba(37,99,235,0.4)] ring-1 ring-blue-400/50" : "text-slate-500 hover:bg-blue-500/5 hover:text-slate-200"}`}
+                  className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-[11px] font-bold uppercase tracking-widest transition-all duration-300 group ${activeTab === "spares" ? "bg-emerald-600 text-white shadow-[0_0_20px_rgba(16,185,129,0.3)] ring-1 ring-emerald-400/50" : "text-slate-500 hover:bg-emerald-50 hover:text-emerald-700"}`}
                 >
-                  <Package className={`w-4 h-4 ${activeTab === "spares" ? "text-white" : "text-slate-600 group-hover:text-blue-500"}`} />
+                  <Package className={`w-4 h-4 ${activeTab === "spares" ? "text-white" : "text-slate-500 group-hover:text-emerald-600"}`} />
                   Spares Stock
                 </button>
                 <button
                   onClick={() => { setActiveTab("users"); setSidebarOpen(false); }}
                   id="tab-btn-users"
-                  className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-[11px] font-bold uppercase tracking-widest transition-all duration-300 group ${activeTab === "users" ? "bg-blue-600 text-white shadow-[0_0_20px_rgba(37,99,235,0.4)] ring-1 ring-blue-400/50" : "text-slate-500 hover:bg-blue-500/5 hover:text-slate-200"}`}
+                  className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-[11px] font-bold uppercase tracking-widest transition-all duration-300 group ${activeTab === "users" ? "bg-emerald-600 text-white shadow-[0_0_20px_rgba(16,185,129,0.3)] ring-1 ring-emerald-400/50" : "text-slate-500 hover:bg-emerald-50 hover:text-emerald-700"}`}
                 >
-                  <Users className={`w-4 h-4 ${activeTab === "users" ? "text-white" : "text-slate-600 group-hover:text-blue-500"}`} />
+                  <Users className={`w-4 h-4 ${activeTab === "users" ? "text-white" : "text-slate-500 group-hover:text-emerald-600"}`} />
                   Admin Role
                 </button>
               </>
@@ -1612,50 +1773,54 @@ export default function App() {
         </div>
 
         {/* User Account Info */}
-        <div className="p-4 border-t border-slate-800 bg-slate-950/40">
+        <div className="p-4 border-t border-slate-100 bg-emerald-50/20">
           <div className="flex items-center gap-3 px-2 mb-4">
-            <div className="w-9 h-9 bg-slate-800 rounded-full flex items-center justify-center text-slate-300 font-semibold uppercase">
+            <div className="w-9 h-9 bg-emerald-100 text-emerald-800 rounded-full flex items-center justify-center font-bold uppercase">
               {user?.displayName ? user.displayName[0] : (dbUser?.name ? dbUser.name[0] : (user?.email?.[0] || "A"))}
             </div>
             <div className="truncate flex-1 min-w-0">
-              <p className="text-xs font-semibold text-white truncate">{user?.displayName || dbUser?.name || "Admin User"}</p>
+              <p className="text-xs font-semibold text-slate-800 truncate">{user?.displayName || dbUser?.name || "Admin User"}</p>
               {dbUser?.phoneNumber && (
-                <p className="text-[10px] text-slate-400 truncate mb-1" title={dbUser.phoneNumber}>📞 {dbUser.phoneNumber}</p>
+                <p className="text-[10px] text-slate-500 truncate mb-1" title={dbUser.phoneNumber}>📞 {dbUser.phoneNumber}</p>
               )}
               <div className="flex items-center gap-1.5 mt-0.5">
-                <span className={`text-[9px] px-1.5 py-0.2 rounded font-extrabold uppercase tracking-wider ${isUserAdmin ? "bg-blue-500/20 text-blue-400 border border-blue-500/10" : "bg-slate-800 text-slate-300 border border-slate-700"}`}>
+                <span className={`text-[9px] px-1.5 py-0.2 rounded font-extrabold uppercase tracking-wider ${isUserAdmin ? "bg-emerald-100 text-emerald-800 border border-emerald-200" : "bg-slate-100 text-slate-600 border border-slate-200"}`}>
                   {isUserAdmin ? "Admin" : "Officer"}
                 </span>
-                <span className="text-[10px] text-slate-400 truncate max-w-[80px]" title={user?.email}>{user?.email || "admin@effzambia.org"}</span>
+                <span className="text-[10px] text-slate-500 truncate max-w-[80px]" title={user?.email}>{user?.email || "admin@effzambia.org"}</span>
               </div>
             </div>
           </div>
 
           <button
             onClick={handleSignOut}
-            className="w-full flex items-center justify-center gap-2 py-2.5 bg-rose-600/10 hover:bg-rose-600 text-rose-500 hover:text-white rounded-xl text-[10px] font-black uppercase tracking-widest transition-all duration-300 cursor-pointer border border-rose-500/20"
+            className="w-full flex items-center justify-center gap-2 py-2.5 bg-rose-50 hover:bg-rose-600 text-rose-600 hover:text-white rounded-xl text-[10px] font-black uppercase tracking-widest transition-all duration-300 cursor-pointer border border-rose-200"
           >
             <LogOut className="w-3.5 h-3.5" />
             Sign Out Session
           </button>
+          
+          <div className="mt-4 text-[9px] font-bold text-slate-400 text-center uppercase tracking-wider">
+            EFF © {new Date().getFullYear()} Zambia
+          </div>
         </div>
       </aside>
 
       {/* Main Container */}
-      <div className="flex-1 md:ml-0 flex flex-col min-w-0 bg-[#0a0f1d]">
+      <div className="flex-1 md:ml-0 flex flex-col min-w-0 bg-emerald-50/40">
         
         {/* Top Header Bar */}
-        <header className="bg-[#0a0f1d]/80 backdrop-blur-md border-b border-blue-500/10 px-6 py-4 flex items-center justify-between sticky top-0 z-30">
+        <header className="bg-white/90 backdrop-blur-md border-b border-emerald-500/10 px-6 py-4 flex items-center justify-between sticky top-0 z-30">
           <div className="flex items-center gap-4">
             <button 
               onClick={() => setSidebarOpen(true)} 
-              className="md:hidden p-2 bg-[#0d1425] border border-blue-500/20 rounded-lg text-slate-400 hover:text-white transition-colors"
+              className="md:hidden p-2 bg-emerald-50 border border-emerald-500/10 rounded-lg text-emerald-700 hover:bg-emerald-100 transition-colors"
             >
               <Menu className="w-6 h-6" />
             </button>
             <div>
-              <h2 className="text-xl font-black text-white tracking-tight uppercase italic">
-                {activeTab} <span className="text-blue-500">Overview</span>
+              <h2 className="text-xl font-black text-slate-800 tracking-tight uppercase italic">
+                {activeTab} <span className="text-emerald-600">Overview</span>
               </h2>
               <p className="text-[10px] font-bold text-slate-500 uppercase tracking-[0.2em] mt-0.5 hidden sm:block">
                 EFF Fleet Intelligence Interface
@@ -1665,23 +1830,23 @@ export default function App() {
 
           <div className="flex items-center gap-3">
             {/* Real-Time Live Sync Status Indicator */}
-            <div className="flex items-center gap-3 px-3 py-1.5 bg-[#0d1425] border border-blue-500/10 rounded-xl shadow-[0_0_15px_rgba(0,0,0,0.2)]">
+            <div className="flex items-center gap-3 px-3 py-1.5 bg-white border border-emerald-500/10 rounded-xl shadow-sm">
               <span className="relative flex h-2 w-2">
                 <span className={`animate-ping absolute inline-flex h-full w-full rounded-full opacity-75 ${isOnline ? "bg-emerald-400" : "bg-amber-400"}`}></span>
                 <span className={`relative inline-flex rounded-full h-2 w-2 ${isOnline ? "bg-emerald-500" : "bg-amber-500"}`}></span>
               </span>
               <div className="flex flex-col text-left">
-                <span className={`text-[9px] font-black uppercase tracking-widest leading-none ${isOnline ? "text-emerald-500" : "text-amber-500"}`}>
+                <span className={`text-[9px] font-black uppercase tracking-widest leading-none ${isOnline ? "text-emerald-600" : "text-amber-600"}`}>
                   {isOnline ? "System Uplink" : "Local Buffer"}
                 </span>
-                <span className="text-[8px] text-slate-600 font-bold uppercase tracking-tighter leading-none mt-1">
+                <span className="text-[8px] text-slate-500 font-bold uppercase tracking-tighter leading-none mt-1">
                   {isOnline ? `Sync: ${lastSynced.toLocaleTimeString()}` : "Auth required"}
                 </span>
               </div>
             </div>
 
             {syncing && (
-              <span className="flex items-center gap-1.5 text-xs text-blue-600 font-medium">
+              <span className="flex items-center gap-1.5 text-xs text-emerald-600 font-medium">
                 <RefreshCw className="w-3.5 h-3.5 animate-spin" />
                 Updating...
               </span>
@@ -1689,15 +1854,15 @@ export default function App() {
             
             <button
               onClick={() => fetchData()}
-              className="p-2.5 rounded-xl text-slate-500 hover:bg-blue-500/10 hover:text-blue-400 border border-blue-500/10 transition-all cursor-pointer group"
+              className="p-2.5 rounded-xl text-slate-500 hover:bg-emerald-50 hover:text-emerald-600 border border-emerald-500/10 transition-all cursor-pointer group"
               title="Refresh Data Matrix"
             >
-              <RefreshCw className={`w-4 h-4 ${syncing ? "animate-spin text-blue-500" : "group-hover:rotate-180 transition-transform duration-500"}`} />
+              <RefreshCw className={`w-4 h-4 ${syncing ? "animate-spin text-emerald-600" : "group-hover:rotate-180 transition-transform duration-500"}`} />
             </button>
 
             <button
               onClick={exportToExcel}
-              className="bg-emerald-500/10 text-emerald-500 hover:bg-emerald-500 hover:text-white px-3.5 py-2 rounded-xl text-xs font-bold flex items-center gap-1.5 shadow-[0_0_15px_rgba(16,185,129,0.1)] transition-all duration-300 cursor-pointer border border-emerald-500/20"
+              className="bg-emerald-500/10 text-emerald-600 hover:bg-emerald-600 hover:text-white px-3.5 py-2 rounded-xl text-xs font-bold flex items-center gap-1.5 shadow-sm transition-all duration-300 cursor-pointer border border-emerald-500/20"
               title="Export Full Report to Excel"
             >
               <FileSpreadsheet className="w-4 h-4" />
@@ -1708,7 +1873,7 @@ export default function App() {
               <button
                 onClick={() => openLogModal()}
                 id="btn-add-log"
-                className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-xl text-xs font-bold flex items-center gap-1.5 shadow-[0_0_20px_rgba(37,99,235,0.3)] transition-all duration-300 cursor-pointer border border-blue-400/30"
+                className="bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded-xl text-xs font-bold flex items-center gap-1.5 shadow-sm transition-all duration-300 cursor-pointer"
               >
                 <Plus className="w-4 h-4" /> Log Service
               </button>
@@ -1717,7 +1882,7 @@ export default function App() {
               <button
                 onClick={() => openBikeModal()}
                 id="btn-add-bike"
-                className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-xl text-xs font-bold flex items-center gap-1.5 shadow-[0_0_20px_rgba(37,99,235,0.3)] transition-all duration-300 cursor-pointer border border-blue-400/30"
+                className="bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded-xl text-xs font-bold flex items-center gap-1.5 shadow-sm transition-all duration-300 cursor-pointer"
               >
                 <Plus className="w-4 h-4" /> Add Bike
               </button>
@@ -1726,7 +1891,7 @@ export default function App() {
               <button
                 onClick={() => openSpareModal()}
                 id="btn-add-spare"
-                className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-xl text-xs font-bold flex items-center gap-1.5 shadow-[0_0_20px_rgba(37,99,235,0.3)] transition-all duration-300 cursor-pointer border border-blue-400/30"
+                className="bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded-xl text-xs font-bold flex items-center gap-1.5 shadow-sm transition-all duration-300 cursor-pointer"
               >
                 <Plus className="w-4 h-4" /> Add Spare Stock
               </button>
@@ -1735,7 +1900,7 @@ export default function App() {
               <button
                 onClick={() => openUserModal()}
                 id="btn-add-user"
-                className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-xl text-xs font-bold flex items-center gap-1.5 shadow-[0_0_20px_rgba(37,99,235,0.3)] transition-all duration-300 cursor-pointer border border-blue-400/30"
+                className="bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded-xl text-xs font-bold flex items-center gap-1.5 shadow-sm transition-all duration-300 cursor-pointer"
               >
                 <Plus className="w-4 h-4" /> Add User / Role
               </button>
@@ -1745,7 +1910,7 @@ export default function App() {
               <button
                 onClick={() => openRequestModal()}
                 id="btn-add-request"
-                className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-xl text-xs font-bold flex items-center gap-1.5 shadow-[0_0_20px_rgba(37,99,235,0.3)] transition-all duration-300 cursor-pointer border border-blue-400/30"
+                className="bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded-xl text-xs font-bold flex items-center gap-1.5 shadow-sm transition-all duration-300 cursor-pointer"
               >
                 <Plus className="w-4 h-4" /> Request Service
               </button>
@@ -1767,14 +1932,14 @@ export default function App() {
                   initial={{ opacity: 0, y: 20 }}
                   animate={{ opacity: 1, y: 0 }}
                   transition={{ delay: 0.1 }}
-                  className="bg-[#0d1425] p-6 rounded-2xl border border-blue-500/10 shadow-[0_0_20px_rgba(37,99,235,0.05)] flex items-center gap-4 hover:border-blue-500/30 transition-colors group"
+                  className="bg-white p-6 rounded-2xl border border-emerald-500/10 shadow-sm flex items-center gap-4 hover:border-emerald-500/30 transition-colors group"
                 >
-                  <div className="p-3.5 bg-blue-500/10 text-blue-500 rounded-xl group-hover:scale-110 transition-transform shadow-[0_0_15px_rgba(37,99,235,0.1)]">
+                  <div className="p-3.5 bg-emerald-50 text-emerald-600 rounded-xl group-hover:scale-110 transition-transform shadow-sm">
                     <Bike className="w-6 h-6" />
                   </div>
                   <div>
                     <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Total Bikes</p>
-                    <h3 className="text-2xl font-black text-white mt-0.5 tracking-tight">{totalBikes}</h3>
+                    <h3 className="text-2xl font-black text-slate-800 mt-0.5 tracking-tight">{totalBikes}</h3>
                   </div>
                 </motion.div>
 
@@ -1783,14 +1948,14 @@ export default function App() {
                   initial={{ opacity: 0, y: 20 }}
                   animate={{ opacity: 1, y: 0 }}
                   transition={{ delay: 0.2 }}
-                  className="bg-[#0d1425] p-6 rounded-2xl border border-emerald-500/10 shadow-[0_0_20px_rgba(16,185,129,0.05)] flex items-center gap-4 hover:border-emerald-500/30 transition-colors group"
+                  className="bg-white p-6 rounded-2xl border border-emerald-500/10 shadow-sm flex items-center gap-4 hover:border-emerald-500/30 transition-colors group"
                 >
-                  <div className="p-3.5 bg-emerald-500/10 text-emerald-500 rounded-xl group-hover:scale-110 transition-transform shadow-[0_0_15px_rgba(16,185,129,0.1)]">
+                  <div className="p-3.5 bg-emerald-100/60 text-emerald-700 rounded-xl group-hover:scale-110 transition-transform shadow-sm">
                     <CheckCircle className="w-6 h-6" />
                   </div>
                   <div>
                     <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Completed Services</p>
-                    <h3 className="text-2xl font-black text-white mt-0.5 tracking-tight">{totalCompleted}</h3>
+                    <h3 className="text-2xl font-black text-slate-800 mt-0.5 tracking-tight">{totalCompleted}</h3>
                   </div>
                 </motion.div>
 
@@ -1799,14 +1964,14 @@ export default function App() {
                   initial={{ opacity: 0, y: 20 }}
                   animate={{ opacity: 1, y: 0 }}
                   transition={{ delay: 0.3 }}
-                  className="bg-[#0d1425] p-6 rounded-2xl border border-amber-500/10 shadow-[0_0_20px_rgba(245,158,11,0.05)] flex items-center gap-4 hover:border-amber-500/30 transition-colors group"
+                  className="bg-white p-6 rounded-2xl border border-emerald-500/10 shadow-sm flex items-center gap-4 hover:border-emerald-500/30 transition-colors group"
                 >
-                  <div className="p-3.5 bg-amber-500/10 text-amber-500 rounded-xl group-hover:scale-110 transition-transform shadow-[0_0_15px_rgba(245,158,11,0.1)]">
+                  <div className="p-3.5 bg-amber-50 text-amber-600 rounded-xl group-hover:scale-110 transition-transform shadow-sm">
                     <Clock className="w-6 h-6" />
                   </div>
                   <div>
                     <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Pending Services</p>
-                    <h3 className="text-2xl font-black text-white mt-0.5 tracking-tight">{totalPending}</h3>
+                    <h3 className="text-2xl font-black text-slate-800 mt-0.5 tracking-tight">{totalPending}</h3>
                   </div>
                 </motion.div>
 
@@ -1815,14 +1980,14 @@ export default function App() {
                   initial={{ opacity: 0, y: 20 }}
                   animate={{ opacity: 1, y: 0 }}
                   transition={{ delay: 0.4 }}
-                  className="bg-[#0d1425] p-6 rounded-2xl border border-indigo-500/10 shadow-[0_0_20px_rgba(99,102,241,0.05)] flex items-center gap-4 hover:border-indigo-500/30 transition-colors group"
+                  className="bg-white p-6 rounded-2xl border border-emerald-500/10 shadow-sm flex items-center gap-4 hover:border-emerald-500/30 transition-colors group"
                 >
-                  <div className="p-3.5 bg-indigo-500/10 text-indigo-400 rounded-xl group-hover:scale-110 transition-transform shadow-[0_0_15px_rgba(99,102,241,0.1)]">
+                  <div className="p-3.5 bg-indigo-50 text-indigo-600 rounded-xl group-hover:scale-110 transition-transform shadow-sm">
                     <Package className="w-6 h-6" />
                   </div>
                   <div>
                     <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Spares in Stock</p>
-                    <h3 className="text-2xl font-black text-white mt-0.5 tracking-tight">{totalSparesInStock}</h3>
+                    <h3 className="text-2xl font-black text-slate-800 mt-0.5 tracking-tight">{totalSparesInStock}</h3>
                   </div>
                 </motion.div>
               </div>
@@ -1838,37 +2003,37 @@ export default function App() {
                   initial={{ opacity: 0, x: -20 }}
                   animate={{ opacity: 1, x: 0 }}
                   transition={{ delay: 0.5 }}
-                  className="bg-[#0d1425] p-6 rounded-2xl border border-blue-500/10 shadow-[0_0_30px_rgba(37,99,235,0.03)] lg:col-span-1"
+                  className="bg-white p-6 rounded-2xl border border-emerald-500/10 shadow-sm lg:col-span-1"
                 >
-                  <h3 className="text-sm font-black text-white mb-6 flex items-center gap-2 uppercase tracking-widest italic">
-                    <Package className="w-4 h-4 text-blue-500" />
+                  <h3 className="text-sm font-black text-slate-800 mb-6 flex items-center gap-2 uppercase tracking-widest italic">
+                    <Package className="w-4 h-4 text-emerald-600" />
                     Spares Stock Overview
                   </h3>
                   
-                  <div className="mb-6 pb-6 border-b border-blue-500/10 flex justify-between items-center bg-blue-500/5 p-4 rounded-xl border border-blue-500/10">
+                  <div className="mb-6 pb-6 flex justify-between items-center bg-emerald-50/50 p-4 rounded-xl border border-emerald-500/10">
                     <div>
                       <p className="text-[10px] text-slate-500 font-bold uppercase tracking-wider">Total Spares Installed</p>
-                      <h4 className="text-xl font-black text-white mt-1">{totalSparesUsed} <span className="text-xs text-slate-500">UNITS</span></h4>
+                      <h4 className="text-xl font-black text-slate-800 mt-1">{totalSparesUsed} <span className="text-xs text-slate-500">UNITS</span></h4>
                     </div>
                     <div className="text-right">
                       <p className="text-[10px] text-slate-500 font-bold uppercase tracking-wider">Unique Types</p>
-                      <h4 className="text-xl font-black text-blue-500 mt-1">{sparesList.length} <span className="text-xs text-slate-500">TYPES</span></h4>
+                      <h4 className="text-xl font-black text-emerald-600 mt-1">{sparesList.length} <span className="text-xs text-slate-500">TYPES</span></h4>
                     </div>
                   </div>
 
                   {/* Tab Selector for In Stock vs Used */}
-                  <div className="flex bg-[#0a0f1d] p-1.5 rounded-xl mb-4 border border-blue-500/10">
+                  <div className="flex bg-slate-50 p-1.5 rounded-xl mb-4 border border-emerald-500/5">
                     <button
                       type="button"
                       onClick={() => setSparesTab("in_stock")}
-                      className={`flex-1 text-center py-2 text-[10px] font-black uppercase tracking-widest rounded-lg cursor-pointer transition-all duration-300 ${sparesTab === "in_stock" ? "bg-blue-600 text-white shadow-[0_0_15px_rgba(37,99,235,0.3)]" : "text-slate-500 hover:text-slate-300"}`}
+                      className={`flex-1 text-center py-2 text-[10px] font-black uppercase tracking-widest rounded-lg cursor-pointer transition-all duration-300 ${sparesTab === "in_stock" ? "bg-emerald-600 text-white shadow-sm" : "text-slate-500 hover:text-emerald-700"}`}
                     >
                       In Stock ({sparesList.length})
                     </button>
                     <button
                       type="button"
                       onClick={() => setSparesTab("used")}
-                      className={`flex-1 text-center py-2 text-[10px] font-black uppercase tracking-widest rounded-lg cursor-pointer transition-all duration-300 ${sparesTab === "used" ? "bg-blue-600 text-white shadow-[0_0_15px_rgba(37,99,235,0.3)]" : "text-slate-500 hover:text-slate-300"}`}
+                      className={`flex-1 text-center py-2 text-[10px] font-black uppercase tracking-widest rounded-lg cursor-pointer transition-all duration-300 ${sparesTab === "used" ? "bg-emerald-600 text-white shadow-sm" : "text-slate-500 hover:text-emerald-700"}`}
                     >
                       Usage Breakdown ({Object.keys(sparesUsedBreakdown).length})
                     </button>
@@ -1887,11 +2052,11 @@ export default function App() {
                               animate={{ opacity: 1, x: 0 }}
                               transition={{ delay: 0.1 * (idx % 5) }}
                               key={spare.id} 
-                              className="flex justify-between items-center text-sm py-3 border-b border-blue-500/5 last:border-0 hover:bg-blue-500/5 rounded-lg px-2 transition-colors group"
+                              className="flex justify-between items-center text-sm py-3 border-b border-emerald-500/5 last:border-0 hover:bg-emerald-50/50 rounded-lg px-2 transition-colors group"
                             >
-                              <span className="font-bold text-slate-300 group-hover:text-white transition-colors">{spare.name}</span>
+                              <span className="font-bold text-slate-700 group-hover:text-emerald-950 transition-colors">{spare.name}</span>
                               <div className="flex items-center gap-2">
-                                <span className={`text-[10px] px-2 py-0.5 rounded font-black uppercase ${spare.quantity > 5 ? "bg-emerald-500/10 text-emerald-500 border border-emerald-500/20" : spare.quantity > 0 ? "bg-amber-500/10 text-amber-500 border border-amber-500/20" : "bg-rose-500/10 text-rose-500 border border-rose-500/20"}`}>
+                                <span className={`text-[10px] px-2 py-0.5 rounded font-black uppercase ${spare.quantity > 5 ? "bg-emerald-500/10 text-emerald-600 border border-emerald-500/20" : spare.quantity > 0 ? "bg-amber-500/10 text-amber-600 border border-amber-500/20" : "bg-rose-500/10 text-rose-500 border border-rose-500/20"}`}>
                                   {spare.quantity} units
                                 </span>
                               </div>
@@ -1908,28 +2073,28 @@ export default function App() {
                           <p className="text-xs text-slate-500 italic py-4 text-center">No spares have been recorded as used yet.</p>
                         ) : (
                           Object.entries(sparesUsedBreakdown).map(([name, count], idx) => {
-                            const originalSpare = sparesList.find(s => s.name === name);
-                            return (
-                              <motion.div 
-                                initial={{ opacity: 0, x: -10 }}
-                                animate={{ opacity: 1, x: 0 }}
-                                transition={{ delay: 0.1 * (idx % 5) }}
-                                key={name} 
-                                className="flex justify-between items-center text-sm py-3 border-b border-blue-500/5 last:border-0 hover:bg-blue-500/5 rounded-lg px-2 transition-colors group"
-                              >
-                                <span className="font-bold text-slate-300 group-hover:text-white transition-colors">{name}</span>
-                                <div className="flex items-center gap-2">
-                                  <span className="text-[10px] bg-blue-500/10 text-blue-400 border border-blue-500/20 px-2 py-0.5 rounded font-black uppercase">
-                                    {count} used
-                                  </span>
-                                  {originalSpare && (
-                                    <span className="text-[10px] text-slate-500 font-bold bg-slate-800/50 px-2 py-0.5 rounded">
-                                      {originalSpare.quantity} stock
-                                    </span>
-                                  )}
-                                </div>
-                              </motion.div>
-                            );
+                             const originalSpare = sparesList.find(s => s.name === name);
+                             return (
+                               <motion.div 
+                                 initial={{ opacity: 0, x: -10 }}
+                                 animate={{ opacity: 1, x: 0 }}
+                                 transition={{ delay: 0.1 * (idx % 5) }}
+                                 key={name} 
+                                 className="flex justify-between items-center text-sm py-3 border-b border-emerald-500/5 last:border-0 hover:bg-emerald-50/50 rounded-lg px-2 transition-colors group"
+                               >
+                                 <span className="font-bold text-slate-700 group-hover:text-emerald-950 transition-colors">{name}</span>
+                                 <div className="flex items-center gap-2">
+                                   <span className="text-[10px] bg-emerald-50 text-emerald-700 border border-emerald-500/10 px-2 py-0.5 rounded font-black uppercase">
+                                     {count} used
+                                   </span>
+                                   {originalSpare && (
+                                     <span className="text-[10px] text-slate-600 font-bold bg-slate-100 px-2 py-0.5 rounded">
+                                       {originalSpare.quantity} stock
+                                     </span>
+                                   )}
+                                 </div>
+                               </motion.div>
+                             );
                           })
                         )}
                       </div>
@@ -1942,16 +2107,16 @@ export default function App() {
                   initial={{ opacity: 0, x: 20 }}
                   animate={{ opacity: 1, x: 0 }}
                   transition={{ delay: 0.6 }}
-                  className="bg-[#0d1425] p-6 rounded-2xl border border-blue-500/10 shadow-[0_0_30px_rgba(37,99,235,0.03)] lg:col-span-2"
+                  className="bg-white p-6 rounded-2xl border border-emerald-500/10 shadow-sm lg:col-span-2"
                 >
-                  <h3 className="text-sm font-black text-white mb-6 flex items-center gap-2 uppercase tracking-widest italic">
-                    <Bike className="w-4 h-4 text-blue-500" />
+                  <h3 className="text-sm font-black text-slate-800 mb-6 flex items-center gap-2 uppercase tracking-widest italic">
+                    <Bike className="w-4 h-4 text-emerald-600" />
                     Fleet Intelligence Summary
                   </h3>
 
                   {bikesList.length === 0 ? (
-                    <div className="text-center py-20 bg-blue-500/5 rounded-2xl border border-blue-500/10 border-dashed">
-                      <Bike className="w-12 h-12 text-slate-800 mx-auto mb-4 opacity-50" />
+                    <div className="text-center py-20 bg-emerald-50/20 rounded-2xl border border-emerald-500/10 border-dashed">
+                      <Bike className="w-12 h-12 text-slate-400 mx-auto mb-4 opacity-50" />
                       <p className="text-xs text-slate-500 font-bold uppercase tracking-widest">No active fleet registry detected</p>
                     </div>
                   ) : (
@@ -1974,25 +2139,25 @@ export default function App() {
                                 animate={{ opacity: 1, y: 0 }}
                                 transition={{ delay: 0.1 * (idx % 10) }}
                                 key={bike.id} 
-                                className="bg-[#0a0f1d] hover:bg-blue-500/5 transition-colors group"
+                                className="bg-emerald-50/10 hover:bg-emerald-50/50 transition-colors group"
                               >
-                                <td className="py-4 px-4 rounded-l-xl border-y border-l border-blue-500/5">
-                                  <div className="font-black text-white text-lg tracking-tight group-hover:text-blue-400 transition-colors">{bike.regNo}</div>
+                                <td className="py-4 px-4 rounded-l-xl border-y border-l border-emerald-500/5">
+                                  <div className="font-black text-slate-800 text-lg tracking-tight group-hover:text-emerald-700 transition-colors">{bike.regNo}</div>
                                   <div className="text-[10px] text-slate-500 font-bold uppercase tracking-wider">{bike.makeModel || "Generic Unit"}</div>
                                 </td>
-                                <td className="py-4 px-4 border-y border-blue-500/5">
-                                  <div className="text-xs text-slate-200 font-bold">{bike.officer}</div>
+                                <td className="py-4 px-4 border-y border-emerald-500/5">
+                                  <div className="text-xs text-slate-700 font-bold">{bike.officer}</div>
                                   <div className="text-[10px] text-slate-500 uppercase font-black">{bike.district}</div>
                                 </td>
-                                <td className="py-4 px-4 border-y border-blue-500/5">
+                                <td className="py-4 px-4 border-y border-emerald-500/5">
                                   <div className="flex flex-col items-center gap-2">
-                                    <span className={`text-[10px] px-2 py-0.5 rounded font-black uppercase tracking-wider ${stats.sparesUsed > 0 ? "bg-blue-500/10 text-blue-400 border border-blue-500/20" : "bg-slate-800/50 text-slate-500 border border-slate-700/50"}`}>
+                                    <span className={`text-[10px] px-2 py-0.5 rounded font-black uppercase tracking-wider ${stats.sparesUsed > 0 ? "bg-emerald-50 text-emerald-700 border border-emerald-100" : "bg-slate-100 text-slate-400 border border-slate-200"}`}>
                                       {stats.sparesUsed} Spares Installed
                                     </span>
                                     {stats.sparesDetails && stats.sparesDetails.length > 0 && (
                                       <div className="flex flex-wrap gap-1 justify-center max-w-[200px]">
                                         {stats.sparesDetails.slice(0, 3).map((s, sIdx) => (
-                                          <span key={sIdx} className="text-[8px] bg-slate-800/80 text-slate-400 px-1.5 py-0.5 rounded font-bold border border-slate-700">
+                                          <span key={sIdx} className="text-[8px] bg-slate-100 text-slate-600 px-1.5 py-0.5 rounded font-bold border border-slate-200">
                                             {s.name}
                                           </span>
                                         ))}
@@ -2003,14 +2168,14 @@ export default function App() {
                                     )}
                                   </div>
                                 </td>
-                                <td className="py-4 px-4 rounded-r-xl border-y border-r border-blue-500/5">
+                                <td className="py-4 px-4 rounded-r-xl border-y border-r border-emerald-500/5">
                                   {stats.pendingWork !== "None" ? (
-                                    <div className="flex items-center gap-2 text-amber-500 animate-pulse">
-                                      <AlertCircle className="w-4 h-4 flex-shrink-0 shadow-[0_0_8px_rgba(245,158,11,0.5)]" />
+                                    <div className="flex items-center gap-2 text-amber-600 animate-pulse">
+                                      <AlertCircle className="w-4 h-4 flex-shrink-0" />
                                       <span className="text-[10px] font-black uppercase tracking-wider truncate max-w-[120px]">{stats.pendingWork}</span>
                                     </div>
                                   ) : (
-                                    <div className="flex items-center gap-2 text-emerald-500/50">
+                                    <div className="flex items-center gap-2 text-emerald-600">
                                       <CheckCircle className="w-4 h-4 flex-shrink-0" />
                                       <span className="text-[10px] font-bold uppercase tracking-wider">Nominal</span>
                                     </div>
@@ -2034,10 +2199,10 @@ export default function App() {
                   initial={{ opacity: 0, y: 20 }}
                   animate={{ opacity: 1, y: 0 }}
                   transition={{ delay: 0.7 }}
-                  className="bg-[#0d1425] p-6 rounded-2xl border border-blue-500/10 shadow-[0_0_30px_rgba(37,99,235,0.03)] lg:col-span-1 flex flex-col h-[400px]"
+                  className="bg-white p-6 rounded-2xl border border-emerald-500/10 shadow-sm lg:col-span-1 flex flex-col h-[400px]"
                 >
-                  <h3 className="text-sm font-black text-white mb-2 flex items-center gap-2 uppercase tracking-widest italic">
-                    <MapPin className="w-4 h-4 text-blue-500" />
+                  <h3 className="text-sm font-black text-slate-800 mb-2 flex items-center gap-2 uppercase tracking-widest italic">
+                    <MapPin className="w-4 h-4 text-emerald-600" />
                     Fleet Deployment Map
                   </h3>
                   <p className="text-[10px] text-slate-500 mb-6 font-bold uppercase tracking-wider">Geospatial distribution across active sectors</p>
@@ -2058,18 +2223,18 @@ export default function App() {
                             className="space-y-2 group"
                           >
                             <div className="flex justify-between items-center">
-                              <span className="text-[11px] font-black text-slate-300 uppercase tracking-widest group-hover:text-blue-400 transition-colors">{district}</span>
-                              <span className="text-[10px] font-black text-blue-400 bg-blue-500/10 px-2 py-0.5 rounded border border-blue-500/20">
+                              <span className="text-[11px] font-black text-slate-700 uppercase tracking-widest group-hover:text-emerald-700 transition-colors">{district}</span>
+                              <span className="text-[10px] font-black text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-100">
                                 {count} UNITS
                               </span>
                             </div>
                             {/* Progress bar */}
-                            <div className="w-full bg-[#0a0f1d] h-1.5 rounded-full overflow-hidden border border-blue-500/5">
+                            <div className="w-full bg-slate-100 h-1.5 rounded-full overflow-hidden border border-emerald-500/5">
                               <motion.div 
                                 initial={{ width: 0 }}
                                 animate={{ width: `${percentage}%` }}
                                 transition={{ duration: 1, delay: 1 }}
-                                className="bg-gradient-to-r from-blue-600 to-blue-400 h-full rounded-full shadow-[0_0_10px_rgba(37,99,235,0.5)]" 
+                                className="bg-gradient-to-r from-emerald-600 to-emerald-400 h-full rounded-full" 
                               ></motion.div>
                             </div>
                           </motion.div>
