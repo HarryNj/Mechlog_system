@@ -1,73 +1,76 @@
 const fs = require('fs');
-let code = fs.readFileSync('src/App.tsx', 'utf8');
 
-const offlineLogic = `
-  const [isOnline, setIsOnline] = useState(typeof navigator !== 'undefined' ? navigator.onLine : true);
-  const [offlineQueue, setOfflineQueue] = useState<any[]>(() => {
-    try { return JSON.parse(localStorage.getItem('eff_offline_queue') || '[]'); }
-    catch { return []; }
-  });
+const helper = `
+import { collection, doc, getDocs, getDoc, setDoc, deleteDoc, updateDoc } from 'firebase/firestore';
+import { db } from './lib/firebase.ts';
 
-  useEffect(() => {
-    const handleOnline = async () => {
-      setIsOnline(true);
-      await processOfflineQueue();
-    };
-    const handleOffline = () => setIsOnline(false);
-    window.addEventListener('online', handleOnline);
-    window.addEventListener('offline', handleOffline);
-    return () => {
-      window.removeEventListener('online', handleOnline);
-      window.removeEventListener('offline', handleOffline);
-    };
-  }, []);
+const mockFetch = async (url, options = {}) => {
+  const method = options.method || 'GET';
+  const path = url.split('?')[0].replace('/api/', '');
+  const segments = path.split('/');
+  const collectionName = segments[0];
+  const id = segments[1];
 
-  const processOfflineQueue = async () => {
-    const queue = JSON.parse(localStorage.getItem('eff_offline_queue') || '[]');
-    if (queue.length === 0) return;
-    
-    setSyncing(true);
-    const newQueue = [];
-    let syncedCount = 0;
-    for (const req of queue) {
-      try {
-        const res = await fetch(req.url, req.options);
-        if (res.ok) {
-          syncedCount++;
-        } else {
-          newQueue.push(req);
-        }
-      } catch (err) {
-        newQueue.push(req);
+  try {
+    if (method === 'GET') {
+      if (id) {
+        const snap = await getDoc(doc(db, collectionName, id));
+        return { ok: true, json: async () => ({ id: snap.id, ...snap.data() }), status: 200 };
+      } else {
+        const snap = await getDocs(collection(db, collectionName));
+        const data = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+        return { ok: true, json: async () => data, status: 200 };
       }
+    } else if (method === 'POST') {
+      if (path === 'auth/sync') {
+        const body = JSON.parse(options.body);
+        const userRef = doc(db, 'users', body.email); // using email as id for simplicity
+        const userSnap = await getDoc(userRef);
+        let userData = { ...body, role: 'user' };
+        if (userSnap.exists()) {
+          userData = { ...userSnap.data(), ...body };
+        }
+        await setDoc(userRef, userData, { merge: true });
+        return { ok: true, json: async () => ({ status: 'success', user: { uid: userRef.id, ...userData } }), status: 200 };
+      }
+      
+      const body = JSON.parse(options.body);
+      // Auto generate ID
+      const newRef = doc(collection(db, collectionName));
+      await setDoc(newRef, body);
+      return { ok: true, json: async () => ({ id: newRef.id, ...body }), status: 200 };
+    } else if (method === 'PUT') {
+      const body = JSON.parse(options.body);
+      await updateDoc(doc(db, collectionName, id), body);
+      return { ok: true, json: async () => ({ id, ...body }), status: 200 };
+    } else if (method === 'DELETE') {
+      await deleteDoc(doc(db, collectionName, id));
+      return { ok: true, json: async () => ({ status: 'success' }), status: 200 };
     }
-    
-    localStorage.setItem('eff_offline_queue', JSON.stringify(newQueue));
-    setOfflineQueue(newQueue);
-    if (syncedCount > 0) {
-      fetchData();
-      alert(\`Synced \${syncedCount} offline actions successfully.\`);
-    }
-    setSyncing(false);
-  };
-
-  const offlineFetch = async (url: string, options: any) => {
-    if (navigator.onLine) {
-      return await fetch(url, options);
-    } else {
-      const queue = JSON.parse(localStorage.getItem('eff_offline_queue') || '[]');
-      queue.push({ url, options });
-      localStorage.setItem('eff_offline_queue', JSON.stringify(queue));
-      setOfflineQueue(queue);
-      alert('You are currently offline. This action has been saved locally and will sync when network is available.');
-      return { ok: true, json: async () => ({ status: "success", offline: true }) } as any;
-    }
-  };
+  } catch (err) {
+    console.error('Mock fetch error:', err);
+    return { ok: false, status: 500, statusText: err.message, json: async () => ({ error: err.message }) };
+  }
+};
 `;
 
-code = code.replace('const [syncing, setSyncing] = useState(false);', 'const [syncing, setSyncing] = useState(false);' + offlineLogic);
+let code = fs.readFileSync('src/App.tsx', 'utf8');
 
-code = code.replace(/await fetch\((url|`\/api\/requests\/.*`|`\/api\/bikes\/.*`|`\/api\/spares\/.*`|`\/api\/logs\/.*`|`\/api\/users\/.*`), \{\s*method/g, 'await offlineFetch($1, { method');
-code = code.replace(/await fetch\("\/api\/requests",/g, 'await offlineFetch("/api/requests",');
+// remove API_BASE_URL logic
+code = code.replace(/const originalFetch = window\.fetch;[\s\S]*?return new Response\([\s\S]*?\}\n\n/m, '');
+code = code.replace(/const API_BASE_URL = \(import\.meta as any\)\.env\.VITE_API_BASE_URL \|\| "";\n/g, '');
+
+// Replace offlineFetch to use mockFetch instead of fetch
+code = code.replace(/return await fetch\(url, options\);/, 'return await mockFetch(url, options);');
+
+// Replace fetch in fetchData
+code = code.replace(/fetch\("\/api\//g, 'mockFetch("/api/');
+code = code.replace(/fetch\(`\/api\//g, 'mockFetch(`/api/');
+
+// Replace fetch in syncUser
+code = code.replace(/fetch\("\/api\/auth\/sync"/g, 'mockFetch("/api/auth/sync"');
+
+// Inject mockFetch
+code = code.replace('import { auth, googleAuthProvider }', helper + '\nimport { auth, googleAuthProvider }');
 
 fs.writeFileSync('src/App.tsx', code);

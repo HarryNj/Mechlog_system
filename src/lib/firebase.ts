@@ -1,3 +1,4 @@
+import { getFirestore } from 'firebase/firestore';
 import { initializeApp } from 'firebase/app';
 import { getAuth, GoogleAuthProvider } from 'firebase/auth';
 import firebaseConfig from '../../firebase-applet-config.json' with { type: 'json' };
@@ -9,3 +10,5 @@ export const googleAuthProvider = new GoogleAuthProvider();
 googleAuthProvider.addScope('https://www.googleapis.com/auth/drive');
 googleAuthProvider.addScope('https://www.googleapis.com/auth/drive.file');
 
+
+export const db = getFirestore(app);
