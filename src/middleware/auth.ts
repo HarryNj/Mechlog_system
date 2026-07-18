@@ -45,6 +45,26 @@ export const requireAuth = async (
 
   const token = authHeader.split('Bearer ')[1];
   
+  // Try to verify using Firebase Admin SDK first
+  try {
+    const decodedToken = await adminAuth.verifyIdToken(token);
+    if (decodedToken) {
+      const lowerEmail = decodedToken.email?.toLowerCase() || '';
+      const isAdminEmail = lowerEmail === "harrisonnjobvu@gmail.com" || lowerEmail === "harrisonnjobvu@gamil.com" || lowerEmail === "admin@effzambia.org" || lowerEmail === "admin@eff.org";
+      req.user = {
+        uid: decodedToken.uid,
+        email: decodedToken.email,
+        name: decodedToken.name || '',
+        role: isAdminEmail ? "admin" : "user",
+        phone_number: decodedToken.phone_number || ''
+      };
+      return next();
+    }
+  } catch (err: any) {
+    // If Firebase validation fails, we try our custom token verification below
+    console.log("Firebase ID Token verification bypassed or failed, checking custom token...");
+  }
+
   // Check custom cryptographic token
   if (token.includes('.')) {
     const payload = verifyCustomToken(token);

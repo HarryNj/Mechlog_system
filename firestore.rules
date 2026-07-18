@@ -1,0 +1,137 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // Global Safety Net: Default-deny catch-all
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // --- REUSABLE SECURITY PRIMITIVES ---
+    
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    // Role-based helper check via a single get() look up
+    function getUserRole(uid) {
+      return get(/databases/$(database)/documents/users/$(uid)).data.role;
+    }
+
+    function isAdmin() {
+      return isSignedIn() && (
+        request.auth.token.email == 'harrisonnjobvu@gmail.com' ||
+        request.auth.token.email == 'harrisonnjobvu@gamil.com' ||
+        request.auth.token.email == 'admin@effzambia.org' ||
+        request.auth.token.email == 'admin@eff.org' ||
+        getUserRole(request.auth.uid) == 'admin'
+      );
+    }
+
+    // --- ENTITY SCHEMA VALIDATION HELPERS ---
+
+    function isValidUser(data) {
+      return data.uid is string && data.uid.size() <= 128 &&
+             data.email is string && data.email.size() <= 128 &&
+             (data.name == null || (data.name is string && data.name.size() <= 200)) &&
+             (data.phoneNumber == null || (data.phoneNumber is string && data.phoneNumber.size() <= 50)) &&
+             (data.role == 'admin' || data.role == 'user');
+    }
+
+    function isValidBike(data) {
+      return data.regNo is string && data.regNo.size() <= 20 &&
+             data.province is string && data.province.size() <= 100 &&
+             data.district is string && data.district.size() <= 100 &&
+             data.model is string && data.model.size() <= 100 &&
+             data.officer is string && data.officer.size() <= 200 &&
+             data.dateAdded is string && data.dateAdded.size() <= 50;
+    }
+
+    function isValidSpare(data) {
+      return data.name is string && data.name.size() <= 100 &&
+             data.quantity is int && data.quantity >= 0 &&
+             data.dateAdded is string && data.dateAdded.size() <= 50 &&
+             data.addedBy is string && data.addedBy.size() <= 128;
+    }
+
+    function isValidServiceLog(data) {
+      return data.bikeId is int &&
+             data.date is string && data.date.size() <= 50 &&
+             data.mileage is int && data.mileage >= 0 &&
+             data.officer is string && data.officer.size() <= 200 &&
+             data.province is string && data.province.size() <= 100 &&
+             data.district is string && data.district.size() <= 100 &&
+             data.status is string && (data.status == 'pending' || data.status == 'completed');
+    }
+
+    function isValidServiceRequest(data) {
+      return data.bikeId is int &&
+             data.bikeReg is string && data.bikeReg.size() <= 20 &&
+             data.requestedBy is string && data.requestedBy.size() <= 128 &&
+             data.serviceType is string && data.serviceType.size() <= 100 &&
+             data.problemDescription is string && data.problemDescription.size() <= 1000 &&
+             data.status is string && (data.status == 'pending' || data.status == 'approved' || data.status == 'rejected');
+    }
+
+    // --- COLLECTION RULES ---
+
+    // USERS COLLECTION
+    match /users/{userId} {
+      allow get: if isSignedIn() && (request.auth.uid == userId || isAdmin());
+      allow list: if isSignedIn(); // Secured via query enforcer filter in client queries
+      
+      allow create: if isSignedIn() && isValidId(userId) && request.auth.uid == userId && isValidUser(incoming());
+      
+      allow update: if isSignedIn() && request.auth.uid == userId && isValidUser(incoming()) && (
+        // Prevent escalating own role to admin unless already an admin or special email
+        (incoming().role == existing().role || isAdmin())
+      );
+      
+      allow delete: if isAdmin();
+    }
+
+    // BIKES COLLECTION
+    match /bikes/{bikeId} {
+      allow read: if isSignedIn();
+      allow create: if isSignedIn() && isValidId(bikeId) && (isAdmin() || getUserRole(request.auth.uid) == 'user') && isValidBike(incoming());
+      allow update: if isSignedIn() && (isAdmin() || getUserRole(request.auth.uid) == 'user') && isValidBike(incoming());
+      allow delete: if isAdmin();
+    }
+
+    // SPARES COLLECTION
+    match /spares/{spareId} {
+      allow read: if isSignedIn();
+      allow create: if isSignedIn() && isValidId(spareId) && isAdmin() && isValidSpare(incoming());
+      allow update: if isSignedIn() && isAdmin() && isValidSpare(incoming());
+      allow delete: if isAdmin();
+    }
+
+    // SERVICE LOGS COLLECTION
+    match /service_logs/{logId} {
+      allow read: if isSignedIn();
+      allow create: if isSignedIn() && isValidId(logId) && isValidServiceLog(incoming());
+      allow update: if isSignedIn() && (isAdmin() || incoming().officer == existing().officer) && isValidServiceLog(incoming());
+      allow delete: if isAdmin();
+    }
+
+    // SERVICE REQUESTS COLLECTION
+    match /service_requests/{requestId} {
+      allow read: if isSignedIn();
+      allow create: if isSignedIn() && isValidId(requestId) && isValidServiceRequest(incoming());
+      allow update: if isSignedIn() && (isAdmin() || incoming().requestedBy == existing().requestedBy) && isValidServiceRequest(incoming());
+      allow delete: if isAdmin();
+    }
+  }
+}

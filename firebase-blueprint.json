@@ -1,0 +1,113 @@
+{
+  "entities": {
+    "User": {
+      "title": "User",
+      "description": "User account registration and authorization profiles",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "description": "The unique Firebase UID of the user" },
+        "email": { "type": "string", "format": "email", "description": "Email address of the user" },
+        "name": { "type": "string", "description": "Full name of the user" },
+        "phoneNumber": { "type": "string", "description": "Phone number of the user" },
+        "role": { "type": "string", "enum": ["admin", "user"], "description": "System access control level" },
+        "createdAt": { "type": "string", "format": "date-time", "description": "Account registration timestamp" }
+      },
+      "required": ["uid", "email", "name", "role"]
+    },
+    "Bike": {
+      "title": "Bike",
+      "description": "Registered service motorcycles/bikes",
+      "type": "object",
+      "properties": {
+        "id": { "type": "integer", "description": "Unique numeric auto-increment ID" },
+        "regNo": { "type": "string", "description": "Unique motorcycle registration number" },
+        "province": { "type": "string", "description": "Zambia Province assigned" },
+        "district": { "type": "string", "description": "Zambia District assigned" },
+        "model": { "type": "string", "description": "Motorcycle make/model" },
+        "officer": { "type": "string", "description": "Field Officer name assigned" },
+        "dateAdded": { "type": "string", "description": "Registration date string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["regNo", "province", "district", "model", "officer", "dateAdded"]
+    },
+    "Spare": {
+      "title": "Spare",
+      "description": "Maintenance spare parts stock tracking",
+      "type": "object",
+      "properties": {
+        "id": { "type": "integer" },
+        "name": { "type": "string", "description": "Unique name of the spare part" },
+        "quantity": { "type": "integer", "description": "Available stock quantity" },
+        "dateAdded": { "type": "string" },
+        "addedBy": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["name", "quantity", "dateAdded", "addedBy"]
+    },
+    "ServiceLog": {
+      "title": "ServiceLog",
+      "description": "Logs detailing full maintenance service events",
+      "type": "object",
+      "properties": {
+        "id": { "type": "integer" },
+        "bikeId": { "type": "integer" },
+        "date": { "type": "string", "description": "Service log date" },
+        "nextServiceDate": { "type": "string" },
+        "nextServiceMileage": { "type": "integer" },
+        "mileage": { "type": "integer" },
+        "officer": { "type": "string" },
+        "province": { "type": "string" },
+        "district": { "type": "string" },
+        "workDone": { "type": "string" },
+        "workPending": { "type": "string" },
+        "status": { "type": "string" },
+        "sparesUsed": {
+          "type": "array",
+          "description": "List of spares used in this specific maintenance service session"
+        },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["bikeId", "date", "mileage", "officer", "province", "district", "status"]
+    },
+    "ServiceRequest": {
+      "title": "ServiceRequest",
+      "description": "On-field maintenance request submitted by users",
+      "type": "object",
+      "properties": {
+        "id": { "type": "integer" },
+        "bikeId": { "type": "integer" },
+        "bikeReg": { "type": "string" },
+        "officerUid": { "type": "string" },
+        "requestedBy": { "type": "string" },
+        "serviceType": { "type": "string" },
+        "problemDescription": { "type": "string" },
+        "status": { "type": "string" },
+        "dateRequested": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["bikeId", "bikeReg", "requestedBy", "serviceType", "problemDescription", "status", "dateRequested"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": "User",
+      "description": "Unique user account profiles"
+    },
+    "/bikes/{bikeId}": {
+      "schema": "Bike",
+      "description": "System-wide registered service motorbikes"
+    },
+    "/spares/{spareId}": {
+      "schema": "Spare",
+      "description": "Master spares stock inventory items"
+    },
+    "/service_logs/{logId}": {
+      "schema": "ServiceLog",
+      "description": "Complete breakdown of services rendered"
+    },
+    "/service_requests/{requestId}": {
+      "schema": "ServiceRequest",
+      "description": "Field maintenance tickets"
+    }
+  }
+}
