@@ -279,6 +279,23 @@ function AgreementModal({ isOpen, onClose }: { isOpen: boolean; onClose: () => v
   );
 }
 
+const COUNTRIES = [
+  { name: "Zambia", code: "+260", flag: "🇿🇲" },
+  { name: "South Africa", code: "+27", flag: "🇿🇦" },
+  { name: "Zimbabwe", code: "+263", flag: "🇿🇼" },
+  { name: "Malawi", code: "+265", flag: "🇲🇼" },
+  { name: "Mozambique", code: "+258", flag: "🇲🇿" },
+  { name: "Tanzania", code: "+255", flag: "🇹🇿" },
+  { name: "Angola", code: "+244", flag: "🇦🇴" },
+  { name: "DR Congo", code: "+243", flag: "🇨🇩" },
+  { name: "Namibia", code: "+264", flag: "🇳🇦" },
+  { name: "Botswana", code: "+267", flag: "🇧🇼" },
+  { name: "Kenya", code: "+254", flag: "🇰🇪" },
+  { name: "Rwanda", code: "+250", flag: "🇷🇼" },
+  { name: "United Kingdom", code: "+44", flag: "🇬🇧" },
+  { name: "United States", code: "+1", flag: "🇺🇸" },
+];
+
 const isIframe = typeof window !== "undefined" && window.self !== window.top;
 
 export default function App() {
@@ -289,6 +306,8 @@ export default function App() {
   const [authPassword, setAuthPassword] = useState("");
   const [authName, setAuthName] = useState("");
   const [authPhone, setAuthPhone] = useState("");
+  const [selectedCountryCode, setSelectedCountryCode] = useState("+260");
+  const [localPhoneInput, setLocalPhoneInput] = useState("");
   const [authError, setAuthError] = useState("");
   const [authSuccess, setAuthSuccess] = useState("");
   const [authLoading, setAuthLoading] = useState(false);
@@ -735,7 +754,8 @@ export default function App() {
   // Handle Email/Password/Name/Phone Register (Custom Secure Relational DB Registration)
   const handleEmailRegister = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!authEmail || !authPassword || !authName || !authPhone) {
+    const finalPhone = selectedCountryCode + localPhoneInput.trim().replace(/\D/g, "");
+    if (!authEmail || !authPassword || !authName || !localPhoneInput) {
       setAuthError("All fields (Name, Email, Phone Number, Password) are required");
       return;
     }
@@ -754,7 +774,7 @@ export default function App() {
           email: authEmail,
           password: authPassword,
           name: authName,
-          phoneNumber: authPhone
+          phoneNumber: finalPhone
         })
       });
       const data = await res.json();
@@ -1441,7 +1461,7 @@ export default function App() {
       <div className="min-h-screen bg-gradient-to-br from-emerald-50 via-green-50 to-emerald-100 flex items-center justify-center p-4 selection:bg-emerald-200/50 font-sans">
         <div className="w-full max-w-md animate-in fade-in zoom-in duration-500">
           <div className="text-center mb-6">
-            <div className="inline-flex p-3 bg-emerald-100/60 rounded-3xl mb-4 border border-emerald-500/20 shadow-sm backdrop-blur-sm">
+            <div className="inline-flex p-3 bg-emerald-100/60 rounded-3xl mb-4 border border-emerald-500/20 backdrop-blur-sm">
               <img src={effLogo} alt="EFF Logo" className="w-16 h-16 object-contain mix-blend-multiply" referrerPolicy="no-referrer" />
             </div>
             
@@ -1460,12 +1480,6 @@ export default function App() {
               </motion.span>
               <span className="text-slate-800 font-black relative">
                 Fleet
-                <motion.span 
-                  className="absolute bottom-0 left-0 h-1 bg-emerald-600 rounded-full"
-                  initial={{ width: 0 }}
-                  animate={{ width: "100%" }}
-                  transition={{ delay: 0.3, duration: 0.8 }}
-                />
               </span>
             </motion.h1>
             
@@ -1480,28 +1494,27 @@ export default function App() {
 
             <div className="relative z-10">
               
-              {/* Only show Tabs if we are not in forgot password mode */}
-              {authMode !== "forgot" ? (
-                <div className="flex bg-emerald-100/40 p-1.5 rounded-2xl mb-6 border border-emerald-500/5">
-                  <button
-                    onClick={() => { setAuthMode("signin"); setAuthError(""); setAuthSuccess(""); }}
-                    className={`flex-1 py-3 text-[10px] font-black uppercase tracking-widest rounded-xl transition-all duration-300 cursor-pointer ${authMode === "signin" ? "bg-emerald-600 text-white shadow-md" : "text-slate-500 hover:text-slate-700"}`}
-                  >
-                    Auth Login
-                  </button>
-                  <button
-                    onClick={() => { setAuthMode("register"); setAuthError(""); setAuthSuccess(""); }}
-                    className={`flex-1 py-3 text-[10px] font-black uppercase tracking-widest rounded-xl transition-all duration-300 cursor-pointer ${authMode === "register" ? "bg-emerald-600 text-white shadow-md" : "text-slate-500 hover:text-slate-700"}`}
-                  >
-                    New Registry
-                  </button>
-                </div>
-              ) : (
-                <div className="text-center mb-6">
-                  <h2 className="text-sm font-bold text-slate-800 uppercase tracking-widest">Reset Access Credentials</h2>
-                  <p className="text-[10px] text-slate-500 mt-1">Provide your email address to recover your password</p>
-                </div>
-              )}
+              {/* Title Section based on Auth Mode */}
+              <div className="text-center mb-6">
+                {authMode === "signin" && (
+                  <>
+                    <h2 className="text-2xl font-bold text-slate-800 tracking-tight">Sign in</h2>
+                    <p className="text-xs text-slate-500 mt-1 font-medium">Access the EFF Fleet mechanic log dashboard</p>
+                  </>
+                )}
+                {authMode === "register" && (
+                  <>
+                    <h2 className="text-2xl font-bold text-slate-800 tracking-tight">Create account</h2>
+                    <p className="text-xs text-slate-500 mt-1 font-medium">Register as a new mechanical fleet administrator</p>
+                  </>
+                )}
+                {authMode === "forgot" && (
+                  <>
+                    <h2 className="text-2xl font-bold text-slate-800 tracking-tight">Reset password</h2>
+                    <p className="text-xs text-slate-500 mt-1 font-medium">Provide your email address to recover credentials</p>
+                  </>
+                )}
+              </div>
 
               {authError && (
                 <div className="mb-6 p-4 bg-rose-50 border border-rose-100 rounded-2xl flex items-center gap-3 animate-in slide-in-from-top-2 duration-300">
@@ -1526,23 +1539,48 @@ export default function App() {
                       </div>
                       <input
                         type="text"
+                        required
                         placeholder="FULL LEGAL NAME"
                         value={authName}
                         onChange={(e) => setAuthName(e.target.value)}
                         className="block w-full pl-11 pr-4 py-3.5 bg-slate-50/60 border border-slate-200 focus:border-emerald-500 rounded-2xl text-xs font-semibold text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 transition-all uppercase tracking-widest"
                       />
                     </div>
-                    <div className="group relative">
-                      <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none">
-                        <Phone className="h-4 w-4 text-slate-400 group-focus-within:text-emerald-600 transition-colors" />
+                    
+                    <div className="space-y-1">
+                      <label className="text-[10px] text-slate-400 font-bold uppercase tracking-wider pl-1">International Phone Number</label>
+                      <div className="flex gap-2">
+                        <div className="relative w-1/3">
+                          <select
+                            value={selectedCountryCode}
+                            onChange={(e) => setSelectedCountryCode(e.target.value)}
+                            className="block w-full px-3 py-3.5 bg-slate-50/60 border border-slate-200 focus:border-emerald-500 rounded-2xl text-xs font-bold text-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 transition-all appearance-none cursor-pointer"
+                          >
+                            {COUNTRIES.map((c) => (
+                              <option key={c.code} value={c.code}>
+                                {c.flag} {c.code}
+                              </option>
+                            ))}
+                          </select>
+                          <div className="absolute inset-y-0 right-3 flex items-center pointer-events-none text-slate-400 text-[10px]">
+                            ▼
+                          </div>
+                        </div>
+                        
+                        <div className="relative flex-1 group">
+                          <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none">
+                            <Phone className="h-4 w-4 text-slate-400 group-focus-within:text-emerald-600 transition-colors" />
+                          </div>
+                          <input
+                            type="tel"
+                            required
+                            placeholder="Phone Number"
+                            value={localPhoneInput}
+                            onChange={(e) => setLocalPhoneInput(e.target.value)}
+                            className="block w-full pl-11 pr-4 py-3.5 bg-slate-50/60 border border-slate-200 focus:border-emerald-500 rounded-2xl text-xs font-semibold text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 transition-all tracking-widest"
+                          />
+                        </div>
                       </div>
-                      <input
-                        type="tel"
-                        placeholder="PHONE NUMBER (+260...)"
-                        value={authPhone}
-                        onChange={(e) => setAuthPhone(e.target.value)}
-                        className="block w-full pl-11 pr-4 py-3.5 bg-slate-50/60 border border-slate-200 focus:border-emerald-500 rounded-2xl text-xs font-semibold text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 transition-all tracking-widest"
-                      />
                     </div>
                   </div>
                 )}
@@ -1553,6 +1591,7 @@ export default function App() {
                   </div>
                   <input
                     type="email"
+                    required
                     placeholder="EMAIL ADDRESS"
                     value={authEmail}
                     onChange={(e) => setAuthEmail(e.target.value)}
@@ -1567,6 +1606,7 @@ export default function App() {
                     </div>
                     <input
                       type="password"
+                      required
                       placeholder="PASSWORD"
                       value={authPassword}
                       onChange={(e) => setAuthPassword(e.target.value)}
@@ -1587,7 +1627,7 @@ export default function App() {
                     </>
                   ) : (
                     <>
-                      {authMode === "signin" ? "Initialize Session" : authMode === "register" ? "Create Account" : "Send Reset Link"}
+                      {authMode === "signin" ? "Sign in" : authMode === "register" ? "Sign up" : "Send Reset Link"}
                       <ArrowRight className="w-4 h-4 group-hover:translate-x-1 transition-transform" />
                     </>
                   )}
@@ -1634,18 +1674,29 @@ export default function App() {
 
               <div className="mt-6 text-center flex flex-col gap-2">
                 {authMode === "signin" ? (
-                  <button
-                    onClick={() => { setAuthMode("forgot"); setAuthError(""); setAuthSuccess(""); }}
-                    className="text-[10px] font-black text-slate-500 hover:text-emerald-600 uppercase tracking-widest transition-colors cursor-pointer"
-                  >
-                    Forgot password?
-                  </button>
+                  <>
+                    <button
+                      type="button"
+                      onClick={() => { setAuthMode("register"); setAuthError(""); setAuthSuccess(""); }}
+                      className="text-xs font-semibold text-slate-500 hover:text-emerald-700 transition-colors cursor-pointer"
+                    >
+                      Don't have an account? <span className="text-emerald-600 font-bold underline">Sign up / Create account</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => { setAuthMode("forgot"); setAuthError(""); setAuthSuccess(""); }}
+                      className="text-[10px] font-black text-slate-400 hover:text-emerald-600 uppercase tracking-widest transition-colors cursor-pointer mt-1"
+                    >
+                      Forgot password?
+                    </button>
+                  </>
                 ) : (
                   <button
+                    type="button"
                     onClick={() => { setAuthMode("signin"); setAuthError(""); setAuthSuccess(""); }}
-                    className="text-[10px] font-black text-slate-500 hover:text-emerald-600 uppercase tracking-widest transition-colors cursor-pointer"
+                    className="text-xs font-semibold text-slate-500 hover:text-emerald-700 transition-colors cursor-pointer"
                   >
-                    Back to login
+                    Already have an account? <span className="text-emerald-600 font-bold underline">Sign in</span>
                   </button>
                 )}
               </div>

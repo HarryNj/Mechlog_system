@@ -39,10 +39,9 @@ import {
   getAllBikes, getBikeByReg, getBikeById, createBike, updateBike, deleteBike,
   getAllSpares, getSpareByName, getSpareById, createSpare, updateSpare, deleteSpare,
   getAllLogs, getLogById, createLog, updateLog, deleteLog,
-  getAllRequests, createRequest, updateRequest, deleteRequest
+  getAllRequests, createRequest, updateRequest, deleteRequest,
+  useFirestore, setUseFirestore
 } from "./src/db/adapters.ts";
-
-const useFirestore = !process.env.DATABASE_URL && !process.env.SQL_HOST;
 
 
 
@@ -181,6 +180,8 @@ async function ensureDatabaseSchema() {
     console.log("Database schema check completed. Self-healing active & database is ready!");
   } catch (err: any) {
     console.error("Critical error in database self-healing schema setup:", err);
+    console.warn("[Database Recovery] SQL migration failed, falling back to Firebase Firestore.");
+    setUseFirestore(true);
   }
 }
 
@@ -241,8 +242,10 @@ async function startServer() {
       const uid = "cust_" + Date.now() + "_" + Math.random().toString(36).substring(2, 7);
       
       // Determine role
+      const allUsers = await getAllUsers();
+      const isFirstUser = allUsers.length === 0;
       const isAdminEmail = lowerEmail === "harrisonnjobvu@gmail.com" || lowerEmail === "harrisonnjobvu@gamil.com" || lowerEmail === "admin@effzambia.org";
-      const role = isAdminEmail ? "admin" : "user";
+      const role = (isFirstUser || isAdminEmail) ? "admin" : "user";
 
       const newUser = await createUser({
         uid,

@@ -3,7 +3,29 @@ import { users, bikes, sparesInventory, serviceLogs, serviceLogSpares, serviceRe
 import { eq, desc, and, sql } from "drizzle-orm";
 import { adminDb } from "../lib/firebase-admin.ts";
 
-const useFirestore = !process.env.DATABASE_URL && !process.env.SQL_HOST;
+export let useFirestore = !process.env.DATABASE_URL && !process.env.SQL_HOST;
+
+export function setUseFirestore(val: boolean) {
+  useFirestore = val;
+  console.log(`[DB System] useFirestore updated to: ${val}`);
+}
+
+// Proactively probe SQL connection at startup to ensure it is healthy.
+// If it fails, fallback seamlessly to Google Firebase Firestore.
+if (!useFirestore) {
+  (async () => {
+    try {
+      console.log("[DB System] Probing SQL database connection health...");
+      await db.execute(sql`SELECT 1`);
+      console.log("[DB System] SQL database connection is healthy and responsive!");
+    } catch (err: any) {
+      console.warn("[DB System Warning] SQL connection probe failed or was terminated unexpectedly.");
+      console.warn("[DB System Warning] Error details:", err?.message || err);
+      console.warn("[DB System Fallback] Switching active database storage layer to Google Firebase Firestore.");
+      useFirestore = true;
+    }
+  })();
+}
 
 // Helper to get next sequential ID in Firestore
 async function getNextFirestoreId(collectionName: string): Promise<number> {
