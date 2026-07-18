@@ -20,8 +20,6 @@ if (process.env.DATABASE_URL || process.env.SQL_HOST) {
       console.log("[DB System] SQL database connection is healthy and responsive! Enabling SQL storage.");
       useFirestore = false;
     } catch (err: any) {
-      console.warn("[DB System Warning] SQL connection probe failed. Staying on Google Firebase Firestore.");
-      console.warn("[DB System Warning] Error details:", err?.message || err);
       useFirestore = true;
     }
   })();

@@ -56,8 +56,6 @@ pool.query = async function (this: any, ...args: any[]) {
 
       if (isConnectionError && retries > 1) {
         retries--;
-        console.warn(`[DB Pool Warning] Query failed due to connection issue. Retrying... (${3 - retries}/2). Error: ${errMsg}`);
-        // Wait 1.5 seconds before retrying
         await new Promise((resolve) => setTimeout(resolve, 1500));
         continue;
       }
@@ -98,7 +96,6 @@ pool.connect = async function (this: any, ...args: any[]) {
 
           if (isConnectionError && retries > 1) {
             retries--;
-            console.warn(`[DB Client Warning] Transaction query failed due to connection issue. Retrying... (${3 - retries}/2). Error: ${errMsg}`);
             await new Promise((resolve) => setTimeout(resolve, 1500));
             continue;
           }

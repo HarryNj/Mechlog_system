@@ -336,7 +336,8 @@ export default function App() {
           setDbLayer(data.useFirestore ? "firestore" : "sql");
         }
       } catch (err) {
-        console.error("Error checking system health status:", err);
+        // Fallback to firestore silently if backend health check fails (e.g. during static export like Cloudflare Pages)
+        setDbLayer("firestore");
       }
     };
     fetchDbStatus();
