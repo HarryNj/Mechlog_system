@@ -3,6 +3,8 @@ import path from "path";
 import { createServer as createViteServer } from "vite";
 import * as dotenv from "dotenv";
 import crypto from "crypto";
+import http from "http";
+import { Server } from "socket.io";
 
 // Load environment variables
 dotenv.config();
@@ -173,6 +175,17 @@ async function startServer() {
   await ensureDatabaseSchema();
   const app = express();
   const PORT = parseInt(process.env.PORT || "3000", 10);
+  const server = http.createServer(app);
+  const io = new Server(server, {
+    cors: { origin: "*" }
+  });
+
+  io.on("connection", (socket) => {
+    console.log("A user connected:", socket.id);
+  });
+
+  // Make io accessible in routes
+  app.set("io", io);
 
   app.use(express.json());
 
@@ -368,6 +381,7 @@ async function startServer() {
         dateAdded,
       }).returning();
 
+      req.app.get("io").emit("data:updated", { type: "bikes" });
       res.json({ status: "success", bike: newBike });
     } catch (error: any) {
       console.error("Error creating bike:", error);
@@ -402,6 +416,7 @@ async function startServer() {
         .where(eq(bikes.id, bikeId))
         .returning();
 
+      req.app.get("io").emit("data:updated", { type: "bikes" });
       res.json({ status: "success", bike: updatedBike });
     } catch (error: any) {
       console.error("Error updating bike:", error);
@@ -413,6 +428,7 @@ async function startServer() {
     try {
       const bikeId = parseInt(req.params.id);
       await db.delete(bikes).where(eq(bikes.id, bikeId));
+      req.app.get("io").emit("data:updated", { type: "bikes" });
       res.json({ status: "success", message: "Bike deleted successfully" });
     } catch (error: any) {
       console.error("Error deleting bike:", error);
@@ -456,6 +472,7 @@ async function startServer() {
         addedBy,
       }).returning();
 
+      req.app.get("io").emit("data:updated", { type: "spares" });
       res.json({ status: "success", spare: newSpare });
     } catch (error: any) {
       console.error("Error creating spare:", error);
@@ -488,6 +505,7 @@ async function startServer() {
         .where(eq(sparesInventory.id, spareId))
         .returning();
 
+      req.app.get("io").emit("data:updated", { type: "spares" });
       res.json({ status: "success", spare: updatedSpare });
     } catch (error: any) {
       console.error("Error updating spare:", error);
@@ -499,6 +517,7 @@ async function startServer() {
     try {
       const spareId = parseInt(req.params.id);
       await db.delete(sparesInventory).where(eq(sparesInventory.id, spareId));
+      req.app.get("io").emit("data:updated", { type: "spares" });
       res.json({ status: "success", message: "Spare deleted from inventory" });
     } catch (error: any) {
       console.error("Error deleting spare:", error);
@@ -596,6 +615,7 @@ async function startServer() {
         return log;
       });
 
+      req.app.get("io").emit("data:updated", { type: "logs" });
       res.json({ status: "success", log: result });
     } catch (error: any) {
       console.error("Error creating service log:", error);
@@ -687,6 +707,7 @@ async function startServer() {
         }
       });
 
+      req.app.get("io").emit("data:updated", { type: "logs" });
       res.json({ status: "success", message: "Service log updated successfully" });
     } catch (error: any) {
       console.error("Error updating service log:", error);
@@ -716,6 +737,7 @@ async function startServer() {
         await tx.delete(serviceLogs).where(eq(serviceLogs.id, logId));
       });
 
+      req.app.get("io").emit("data:updated", { type: "logs" });
       res.json({ status: "success", message: "Service log deleted and spares returned to inventory" });
     } catch (error: any) {
       console.error("Error deleting service log:", error);
@@ -849,6 +871,7 @@ async function startServer() {
         dateRequested
       }).returning();
 
+      req.app.get("io").emit("data:updated", { type: "requests" });
       res.json({ status: "success", request: newRequest });
     } catch (error: any) {
       console.error("Error creating service request:", error);
@@ -894,6 +917,7 @@ async function startServer() {
         .where(eq(serviceRequests.id, requestId))
         .returning();
 
+      req.app.get("io").emit("data:updated", { type: "requests" });
       res.json({ status: "success", request: updatedRequest });
     } catch (error: any) {
       console.error("Error updating request status:", error);
@@ -944,7 +968,7 @@ async function startServer() {
     });
   }
 
-  app.listen(PORT, "0.0.0.0", () => {
+  server.listen(PORT, "0.0.0.0", () => {
     console.log(`Server running on http://localhost:${PORT}`);
   });
 }

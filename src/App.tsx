@@ -1,5 +1,6 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { motion, AnimatePresence } from "motion/react";
+import { io } from "socket.io-client";
 import { 
   Plus, 
   Trash2, 
@@ -560,6 +561,23 @@ export default function App() {
       if (!isSilent) setSyncing(false);
     }
   };
+
+  const fetchDataRef = useRef(fetchData);
+  useEffect(() => { fetchDataRef.current = fetchData; });
+
+  // Real-time socket sync
+  useEffect(() => {
+    const socket = io();
+
+    socket.on("data:updated", (data: { type: string }) => {
+      console.log("Data updated, refetching...", data);
+      fetchDataRef.current(undefined, undefined, true); // Silent update
+    });
+
+    return () => {
+      socket.disconnect();
+    };
+  }, []);
 
   // Automated background polling to sync data dynamically across all devices
   useEffect(() => {
