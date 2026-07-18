@@ -218,7 +218,7 @@ async function startServer() {
 
   // Health check
   app.get("/api/health", (req, res) => {
-    res.json({ status: "ok" });
+    res.json({ status: "ok", useFirestore });
   });
 
   // Custom Registration Route (using relational PostgreSQL storage)
