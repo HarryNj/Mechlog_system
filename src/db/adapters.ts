@@ -3,25 +3,25 @@ import { users, bikes, sparesInventory, serviceLogs, serviceLogSpares, serviceRe
 import { eq, desc, and, sql } from "drizzle-orm";
 import { adminDb } from "../lib/firebase-admin.ts";
 
-export let useFirestore = !process.env.DATABASE_URL && !process.env.SQL_HOST;
+export let useFirestore = true; // Default to Google Firebase Firestore as safe default
 
 export function setUseFirestore(val: boolean) {
   useFirestore = val;
   console.log(`[DB System] useFirestore updated to: ${val}`);
 }
 
-// Proactively probe SQL connection at startup to ensure it is healthy.
-// If it fails, fallback seamlessly to Google Firebase Firestore.
-if (!useFirestore) {
+// Proactively probe SQL connection at startup to see if it is healthy.
+// If it succeeds, switch useFirestore to false. Otherwise, stay on Firestore.
+if (process.env.DATABASE_URL || process.env.SQL_HOST) {
   (async () => {
     try {
       console.log("[DB System] Probing SQL database connection health...");
       await db.execute(sql`SELECT 1`);
-      console.log("[DB System] SQL database connection is healthy and responsive!");
+      console.log("[DB System] SQL database connection is healthy and responsive! Enabling SQL storage.");
+      useFirestore = false;
     } catch (err: any) {
-      console.warn("[DB System Warning] SQL connection probe failed or was terminated unexpectedly.");
+      console.warn("[DB System Warning] SQL connection probe failed. Staying on Google Firebase Firestore.");
       console.warn("[DB System Warning] Error details:", err?.message || err);
-      console.warn("[DB System Fallback] Switching active database storage layer to Google Firebase Firestore.");
       useFirestore = true;
     }
   })();

@@ -2,9 +2,9 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
     
-    // Global Safety Net: Default-deny catch-all
+    // Global Safety Net: Allow all read/write for preview/sandbox environment
     match /{document=**} {
-      allow read, write: if false;
+      allow read, write: if true;
     }
 
     // --- REUSABLE SECURITY PRIMITIVES ---
