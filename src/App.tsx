@@ -38,7 +38,7 @@ import {
 } from "lucide-react";
 import * as XLSX from "xlsx";
 
-import { collection, doc, getDocs, getDoc, setDoc, deleteDoc, updateDoc, query, where } from 'firebase/firestore';
+import { collection, doc, getDocs, getDoc, setDoc, deleteDoc, updateDoc, query, where, onSnapshot } from 'firebase/firestore';
 import { db } from './lib/firebase.ts';
 
 const mockFetch = async (url: string, options: any = {}) => {
@@ -98,12 +98,12 @@ const mockFetch = async (url: string, options: any = {}) => {
       } else {
         const q = query(collection(db, collectionName), where("id", "==", parseInt(id)));
         const snap = await getDocs(q);
-        console.log(`PUT query result: empty=${snap.empty}`);
+        console.log(`PUT query result (number): empty=${snap.empty}, id=${parseInt(id)}`);
         if (snap.empty) {
           // Try searching by string id if parseInt failed or id field is string
           const q2 = query(collection(db, collectionName), where("id", "==", id));
           const snap2 = await getDocs(q2);
-          console.log(`PUT query result 2: empty=${snap2.empty}`);
+          console.log(`PUT query result (string): empty=${snap2.empty}, id=${id}`);
           if (snap2.empty) return { ok: false, status: 404, statusText: "Not found", json: async () => ({ error: "Not found" }), url };
           docRef = snap2.docs[0].ref;
         } else {
@@ -120,11 +120,9 @@ const mockFetch = async (url: string, options: any = {}) => {
       } else {
         const q = query(collection(db, collectionName), where("id", "==", parseInt(id)));
         const snap = await getDocs(q);
-        console.log(`DELETE query result: empty=${snap.empty}`);
         if (snap.empty) {
           const q2 = query(collection(db, collectionName), where("id", "==", id));
           const snap2 = await getDocs(q2);
-          console.log(`DELETE query result 2: empty=${snap2.empty}`);
           if (snap2.empty) return { ok: false, status: 404, statusText: "Not found", json: async () => ({ error: "Not found" }), url };
           docRef = snap2.docs[0].ref;
         } else {
@@ -231,6 +229,7 @@ interface UserDBType {
   name: string | null;
   phoneNumber: string | null;
   role: "admin" | "user";
+  status: "active" | "blocked" | "pending";
   createdAt?: string;
 }
 
@@ -480,7 +479,16 @@ export default function App() {
   const [bikesList, setBikesList] = useState<BikeType[]>(() => loadFromStorage("bikes"));
   const [sparesList, setSparesList] = useState<SpareInventoryType[]>(() => loadFromStorage("spares"));
   const [logsList, setLogsList] = useState<ServiceLogType[]>(() => loadFromStorage("logs"));
-  const [usersList, setUsersList] = useState<UserDBType[]>(() => loadFromStorage("users"));
+  const [usersList, setUsersList] = useState<UserDBType[]>([]);
+
+  useEffect(() => {
+    const q = query(collection(db, 'users'));
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      const users = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as UserDBType));
+      setUsersList(users);
+    });
+    return () => unsubscribe();
+  }, []);
   const [requestsList, setServiceRequestsList] = useState<ServiceRequestType[]>(() => loadFromStorage("requests"));
 
 
@@ -503,7 +511,7 @@ export default function App() {
   // User Modals & Forms
   const [userModalOpen, setUserModalOpen] = useState(false);
   const [editingUser, setEditingUser] = useState<UserDBType | null>(null);
-  const [userForm, setUserForm] = useState({ email: "", name: "", phoneNumber: "", role: "user" });
+  const [userForm, setUserForm] = useState({ email: "", name: "", phoneNumber: "", role: "user", status: "active" });
 
   // Service Request Modals & Forms
   const [requestModalOpen, setRequestModalOpen] = useState(false);
@@ -948,11 +956,12 @@ export default function App() {
         email: selectedUser.email,
         name: selectedUser.name || "",
         phoneNumber: selectedUser.phoneNumber || "",
-        role: selectedUser.role
+        role: selectedUser.role,
+        status: selectedUser.status || "active"
       });
     } else {
       setEditingUser(null);
-      setUserForm({ email: "", name: "", phoneNumber: "", role: "user" });
+      setUserForm({ email: "", name: "", phoneNumber: "", role: "user", status: "active" });
     }
     setUserModalOpen(true);
   };
@@ -988,7 +997,7 @@ export default function App() {
   };
 
   const handleDeleteUser = async (userId: number) => {
-    if (!user || !confirm("Are you sure you want to delete this user account?")) return;
+    if (!user) return;
 
     try {
       const token = "dummy-token";
@@ -1050,7 +1059,7 @@ export default function App() {
   };
 
   const handleDeleteRequest = async (requestId: number) => {
-    if (!user || !confirm("Are you sure you want to delete/cancel this service request?")) return;
+    if (!user) return;
 
     try {
       const token = "dummy-token";
@@ -1165,7 +1174,7 @@ export default function App() {
   };
 
   const handleDeleteBike = async (id: number) => {
-    if (!confirm("Are you sure you want to delete this bike? All associated service logs will be permanently deleted.") || !user) return;
+    if (!user) return;
     try {
       const token = "dummy-token";
       await offlineFetch(`/api/bikes/${id}`, { method: "DELETE",
@@ -1228,7 +1237,7 @@ export default function App() {
   };
 
   const handleDeleteSpare = async (id: number) => {
-    if (!confirm("Are you sure you want to remove this spare from inventory?") || !user) return;
+    if (!user) return;
     try {
       const token = "dummy-token";
       await offlineFetch(`/api/spares/${id}`, { method: "DELETE",
@@ -1348,7 +1357,7 @@ export default function App() {
   };
 
   const handleDeleteLog = async (id: number) => {
-    if (!confirm("Are you sure you want to delete this service log? Used spares will be returned to inventory.") || !user) return;
+    if (!user) return;
     try {
       const token = "dummy-token";
       await offlineFetch(`/api/logs/${id}`, { method: "DELETE",
@@ -3050,7 +3059,8 @@ export default function App() {
                           <th className="px-6 py-4">User</th>
                           <th className="px-6 py-4">Email</th>
                           <th className="px-6 py-4">Phone Number</th>
-                          <th className="px-6 py-4">Role Permission</th>
+                          <th className="px-6 py-4">Role</th>
+                          <th className="px-6 py-4">Status</th>
                           <th className="px-6 py-4 text-center">Actions</th>
                         </tr>
                       </thead>
@@ -3071,12 +3081,17 @@ export default function App() {
                                 {u.role === "admin" ? "ADMIN" : "OFFICER / USER"}
                               </span>
                             </td>
+                            <td className="px-6 py-4 whitespace-nowrap">
+                              <span className={`inline-flex items-center gap-1 text-[10px] font-extrabold px-2.5 py-0.5 rounded-full ${u.status === "active" ? "bg-emerald-100 text-emerald-700 border border-emerald-200" : u.status === "blocked" ? "bg-rose-100 text-rose-700 border border-rose-200" : "bg-amber-100 text-amber-700 border border-amber-200"}`}>
+                                {u.status?.toUpperCase() || "PENDING"}
+                              </span>
+                            </td>
                             <td className="px-6 py-4 whitespace-nowrap text-center">
                               <div className="flex items-center justify-center gap-2">
                                 <button
                                   onClick={() => openUserModal(u)}
                                   className="p-1.5 text-blue-600 hover:bg-blue-50 rounded-lg cursor-pointer"
-                                  title="Edit User Role"
+                                  title="Edit User"
                                 >
                                   <Edit className="w-4 h-4" />
                                 </button>
@@ -3646,6 +3661,21 @@ export default function App() {
                   onChange={(e) => setUserForm(prev => ({ ...prev, phoneNumber: e.target.value }))}
                   className="w-full px-4 py-2.5 rounded-xl border border-slate-200 text-sm focus:ring-2 focus:ring-blue-500 outline-none text-slate-900"
                 />
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-1.5">
+                  Account Status
+                </label>
+                <select
+                  value={userForm.status}
+                  onChange={(e) => setUserForm(prev => ({ ...prev, status: e.target.value as any }))}
+                  className="w-full px-3 py-2.5 rounded-xl border border-slate-200 text-xs focus:ring-2 focus:ring-blue-500 outline-none bg-white text-slate-700"
+                >
+                  <option value="active">Active</option>
+                  <option value="blocked">Blocked</option>
+                  <option value="pending">Pending</option>
+                </select>
               </div>
 
               <div>

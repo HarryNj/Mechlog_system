@@ -1,0 +1,15 @@
+{
+  "name": "EFF Fleet Maintenance",
+  "short_name": "EFF Fleet",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "theme_color": "#059669",
+  "icons": [
+    {
+      "src": "/app_icon.jpg",
+      "sizes": "512x512",
+      "type": "image/jpeg"
+    }
+  ]
+}
