@@ -38,7 +38,7 @@ import {
 } from "lucide-react";
 import * as XLSX from "xlsx";
 
-import { collection, doc, getDocs, getDoc, setDoc, deleteDoc, updateDoc } from 'firebase/firestore';
+import { collection, doc, getDocs, getDoc, setDoc, deleteDoc, updateDoc, query, where } from 'firebase/firestore';
 import { db } from './lib/firebase.ts';
 
 const mockFetch = async (url: string, options: any = {}) => {
@@ -51,8 +51,10 @@ const mockFetch = async (url: string, options: any = {}) => {
   try {
     if (method === 'GET') {
       if (id) {
-        const snap = await getDoc(doc(db, collectionName, id));
-        return { ok: true, json: async () => ({ id: snap.id, ...snap.data() }), status: 200, url };
+        const q = query(collection(db, collectionName), where("id", "==", parseInt(id)));
+        const snap = await getDocs(q);
+        if (snap.empty) return { ok: false, status: 404, statusText: "Not found", json: async () => ({ error: "Not found" }), url };
+        return { ok: true, json: async () => ({ id: snap.docs[0].id, ...snap.docs[0].data() }), status: 200, url };
       } else {
         const snap = await getDocs(collection(db, collectionName));
         const data = snap.docs.map(d => ({ id: d.id, ...d.data() }));
@@ -82,10 +84,16 @@ const mockFetch = async (url: string, options: any = {}) => {
       return { ok: true, json: async () => ({ id: newRef.id, ...body }), status: 200, url };
     } else if (method === 'PUT') {
       const body = JSON.parse(options.body);
-      await updateDoc(doc(db, collectionName, id), body);
+      const q = query(collection(db, collectionName), where("id", "==", parseInt(id)));
+      const snap = await getDocs(q);
+      if (snap.empty) return { ok: false, status: 404, statusText: "Not found", json: async () => ({ error: "Not found" }), url };
+      await updateDoc(snap.docs[0].ref, body);
       return { ok: true, json: async () => ({ id, ...body }), status: 200, url };
     } else if (method === 'DELETE') {
-      await deleteDoc(doc(db, collectionName, id));
+      const q = query(collection(db, collectionName), where("id", "==", parseInt(id)));
+      const snap = await getDocs(q);
+      if (snap.empty) return { ok: false, status: 404, statusText: "Not found", json: async () => ({ error: "Not found" }), url };
+      await deleteDoc(snap.docs[0].ref);
       return { ok: true, json: async () => ({ status: 'success' }), status: 200, url };
     }
   } catch (err: any) {
