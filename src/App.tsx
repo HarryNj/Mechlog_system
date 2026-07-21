@@ -47,14 +47,12 @@ const mockFetch = async (url: string, options: any = {}) => {
   const segments = path.split('/');
   const collectionName = segments[0];
   const id = segments[1];
-
   try {
     if (method === 'GET') {
       if (id) {
-        const q = query(collection(db, collectionName), where("id", "==", parseInt(id)));
-        const snap = await getDocs(q);
-        if (snap.empty) return { ok: false, status: 404, statusText: "Not found", json: async () => ({ error: "Not found" }), url };
-        return { ok: true, json: async () => ({ id: snap.docs[0].id, ...snap.docs[0].data() }), status: 200, url };
+        const snap = await getDoc(doc(db, collectionName, id));
+        if (!snap.exists()) return { ok: false, status: 404, statusText: "Not found", json: async () => ({ error: "Not found" }), url };
+        return { ok: true, json: async () => ({ id: snap.id, ...snap.data() }), status: 200, url };
       } else {
         const snap = await getDocs(collection(db, collectionName));
         const data = snap.docs.map(d => ({ id: d.id, ...d.data() }));
