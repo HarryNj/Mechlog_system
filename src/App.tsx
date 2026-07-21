@@ -65,7 +65,7 @@ const mockFetch = async (url: string, options: any = {}) => {
         const userSnap = await getDoc(userRef);
         let userData = { ...body, role: 'user' };
         const lowerEmail = body.email?.toLowerCase();
-        if (lowerEmail === 'harrisonnjobvu@gmail.com' || lowerEmail === 'harrisonnjobvu@gamil.com' || lowerEmail === 'admin@effzambia.org') {
+        if (lowerEmail === 'harrisonnjobvu@gmail.com' || lowerEmail === 'harrisonnjobvu@gamil.com' || lowerEmail === 'admin@effzambia.org' || lowerEmail === 'mathewshamzy@gmail.com') {
           userData.role = 'admin';
         }
         if (userSnap.exists()) {
@@ -91,16 +91,47 @@ const mockFetch = async (url: string, options: any = {}) => {
       return { ok: true, json: async () => ({ id: newRef.id, ...body }), status: 200, url };
     } else if (method === 'PUT') {
       const body = JSON.parse(options.body);
-      const q = query(collection(db, collectionName), where("id", "==", parseInt(id)));
-      const snap = await getDocs(q);
-      if (snap.empty) return { ok: false, status: 404, statusText: "Not found", json: async () => ({ error: "Not found" }), url };
-      await updateDoc(snap.docs[0].ref, body);
+      console.log(`PUT request: collection=${collectionName}, id=${id}, body=`, body);
+      let docRef;
+      if (collectionName === 'users') {
+        docRef = doc(db, 'users', id);
+      } else {
+        const q = query(collection(db, collectionName), where("id", "==", parseInt(id)));
+        const snap = await getDocs(q);
+        console.log(`PUT query result: empty=${snap.empty}`);
+        if (snap.empty) {
+          // Try searching by string id if parseInt failed or id field is string
+          const q2 = query(collection(db, collectionName), where("id", "==", id));
+          const snap2 = await getDocs(q2);
+          console.log(`PUT query result 2: empty=${snap2.empty}`);
+          if (snap2.empty) return { ok: false, status: 404, statusText: "Not found", json: async () => ({ error: "Not found" }), url };
+          docRef = snap2.docs[0].ref;
+        } else {
+          docRef = snap.docs[0].ref;
+        }
+      }
+      await updateDoc(docRef, body);
       return { ok: true, json: async () => ({ id, ...body }), status: 200, url };
     } else if (method === 'DELETE') {
-      const q = query(collection(db, collectionName), where("id", "==", parseInt(id)));
-      const snap = await getDocs(q);
-      if (snap.empty) return { ok: false, status: 404, statusText: "Not found", json: async () => ({ error: "Not found" }), url };
-      await deleteDoc(snap.docs[0].ref);
+      console.log(`DELETE request: collection=${collectionName}, id=${id}`);
+      let docRef;
+      if (collectionName === 'users') {
+        docRef = doc(db, 'users', id);
+      } else {
+        const q = query(collection(db, collectionName), where("id", "==", parseInt(id)));
+        const snap = await getDocs(q);
+        console.log(`DELETE query result: empty=${snap.empty}`);
+        if (snap.empty) {
+          const q2 = query(collection(db, collectionName), where("id", "==", id));
+          const snap2 = await getDocs(q2);
+          console.log(`DELETE query result 2: empty=${snap2.empty}`);
+          if (snap2.empty) return { ok: false, status: 404, statusText: "Not found", json: async () => ({ error: "Not found" }), url };
+          docRef = snap2.docs[0].ref;
+        } else {
+          docRef = snap.docs[0].ref;
+        }
+      }
+      await deleteDoc(docRef);
       return { ok: true, json: async () => ({ status: 'success' }), status: 200, url };
     }
   } catch (err: any) {
