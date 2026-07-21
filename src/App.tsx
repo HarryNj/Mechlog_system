@@ -551,9 +551,21 @@ export default function App() {
       const token = "dummy-token";
       const headers = { "Authorization": `Bearer ${token}` };
 
+      // Refresh user role
+      const userRes = await mockFetch("/api/auth/me", { headers });
+      let finalDbUser = syncedDbUser;
+      if (userRes.ok) {
+        const userData = await userRes.json();
+        if (userData.status === "success") {
+          finalDbUser = userData.user;
+          setDbUser(finalDbUser);
+          saveToStorage("dbUser", finalDbUser);
+        }
+      }
+
       const lowerEmail = currentUser.email?.toLowerCase() || "";
       const isAdminEmail = lowerEmail === "harrisonnjobvu@gmail.com" || lowerEmail === "harrisonnjobvu@gamil.com" || lowerEmail === "admin@effzambia.org" || lowerEmail === "admin@eff.org";
-      const isAdminUser = syncedDbUser?.role === "admin" || isAdminEmail;
+      const isAdminUser = finalDbUser?.role === "admin" || isAdminEmail;
 
       const fetchPromises: Promise<any>[] = [
         mockFetch("/api/bikes", { headers }),
@@ -623,7 +635,7 @@ export default function App() {
     const socket = io();
 
     socket.on("data:updated", (data: { type: string }) => {
-      console.log("Data updated, refetching...", data);
+      console.log("Data updated event received, refetching...", data);
       fetchDataRef.current(undefined, undefined, true); // Silent update
     });
 
@@ -2343,9 +2355,9 @@ export default function App() {
                     initial={{ opacity: 0, y: 20 }}
                     animate={{ opacity: 1, y: 0 }}
                     transition={{ delay: 0.8 }}
-                    className="bg-[#0d1425] p-6 rounded-2xl border border-emerald-500/10 shadow-[0_0_30px_rgba(16,185,129,0.03)] flex flex-col h-full"
+                    className="bg-slate-700 p-6 rounded-2xl border border-emerald-500/10 shadow-[0_0_30px_rgba(16,185,129,0.03)] flex flex-col h-full"
                   >
-                    <h3 className="text-[10px] font-black text-emerald-500 mb-1 flex items-center gap-1.5 uppercase tracking-widest italic">
+                    <h3 className="text-[10px] font-black text-emerald-200 mb-1 flex items-center gap-1.5 uppercase tracking-widest italic">
                       <CheckCircle className="w-4 h-4" />
                       Maintenance Executed
                     </h3>
@@ -2363,10 +2375,10 @@ export default function App() {
                             animate={{ opacity: 1, scale: 1 }}
                             transition={{ delay: 0.9 + (idx * 0.05) }}
                             key={log.id} 
-                            className="p-3 bg-[#0a0f1d] rounded-xl border border-emerald-500/5 hover:border-emerald-500/20 transition-all group"
+                            className="p-3 bg-slate-50 rounded-xl border border-emerald-500/5 hover:border-emerald-500/20 transition-all group"
                           >
                             <div className="flex justify-between items-start mb-2">
-                              <span className="font-black text-white text-sm tracking-tight group-hover:text-emerald-400 transition-colors">{log.bikeReg || log.bike?.regNo || `Bike #${log.bikeId}`}</span>
+                              <span className="font-black text-slate-800 text-sm tracking-tight group-hover:text-emerald-900 transition-colors">{log.bikeReg || log.bike?.regNo || `Bike #${log.bikeId}`}</span>
                               <span className="text-[9px] text-slate-600 font-bold uppercase tracking-tighter">{log.date}</span>
                             </div>
                             <div className="text-slate-500 text-[9px] font-black uppercase tracking-widest mb-2 opacity-60">
@@ -2395,9 +2407,9 @@ export default function App() {
                     initial={{ opacity: 0, y: 20 }}
                     animate={{ opacity: 1, y: 0 }}
                     transition={{ delay: 0.9 }}
-                    className="bg-[#0d1425] p-6 rounded-2xl border border-amber-500/10 shadow-[0_0_30px_rgba(245,158,11,0.03)] flex flex-col h-full"
+                    className="bg-slate-700 p-6 rounded-2xl border border-amber-500/10 shadow-[0_0_30px_rgba(245,158,11,0.03)] flex flex-col h-full"
                   >
-                    <h3 className="text-[10px] font-black text-amber-500 mb-1 flex items-center gap-1.5 uppercase tracking-widest italic">
+                    <h3 className="text-[10px] font-black text-amber-200 mb-1 flex items-center gap-1.5 uppercase tracking-widest italic">
                       <Clock className="w-4 h-4" />
                       Active Alerts (Pending)
                     </h3>
@@ -2415,10 +2427,10 @@ export default function App() {
                             animate={{ opacity: 1, scale: 1 }}
                             transition={{ delay: 1.0 + (idx * 0.05) }}
                             key={log.id} 
-                            className="p-3 bg-[#0a0f1d] rounded-xl border border-amber-500/5 hover:border-amber-500/20 transition-all group"
+                            className="p-3 bg-slate-50 rounded-xl border border-amber-500/5 hover:border-amber-500/20 transition-all group"
                           >
                             <div className="flex justify-between items-start mb-2">
-                              <span className="font-black text-white text-sm tracking-tight group-hover:text-amber-400 transition-colors">{log.bikeReg || log.bike?.regNo || `Bike #${log.bikeId}`}</span>
+                              <span className="font-black text-slate-800 text-sm tracking-tight group-hover:text-amber-900 transition-colors">{log.bikeReg || log.bike?.regNo || `Bike #${log.bikeId}`}</span>
                               <span className="text-[9px] text-amber-500/50 font-bold uppercase tracking-tighter italic">Awaiting Action</span>
                             </div>
                             <div className="text-slate-500 text-[9px] font-black uppercase tracking-widest mb-2 opacity-60">
@@ -2732,7 +2744,7 @@ export default function App() {
           {/* ==================== SPARES STOCK VIEW ==================== */}
           {activeTab === "spares" && (
             <div className="space-y-6 animate-in slide-in-from-bottom-2 duration-300">
-              <div className="bg-[#0d1425] border border-blue-500/10 rounded-2xl p-6 flex flex-col md:flex-row md:items-center justify-between gap-4 shadow-xl">
+              <div className="bg-white border border-slate-200 rounded-2xl p-6 flex flex-col md:flex-row md:items-center justify-between gap-4 shadow-sm">
                 <div className="flex gap-4">
                   <div className="w-12 h-12 bg-blue-500/10 rounded-2xl flex items-center justify-center border border-blue-500/20">
                     <Package className="w-6 h-6 text-blue-400" />
@@ -2752,7 +2764,7 @@ export default function App() {
               </div>
 
               {sparesList.length === 0 ? (
-                <div className="text-center py-24 bg-[#0d1425] rounded-3xl border border-blue-500/5 shadow-inner">
+                <div className="text-center py-24 bg-white rounded-3xl border border-slate-200 shadow-sm">
                   <Package className="w-20 h-20 text-slate-800 mx-auto mb-4 opacity-20" />
                   <h4 className="text-xl font-black text-slate-700 uppercase italic tracking-widest">Inventory Depleted</h4>
                   <p className="text-[10px] text-slate-600 mt-2 font-bold uppercase tracking-widest max-w-xs mx-auto">Zero resources detected in the primary buffer. Initialize provisioning sequence.</p>
@@ -2772,7 +2784,7 @@ export default function App() {
                         initial={{ opacity: 0, scale: 0.95 }}
                         animate={{ opacity: 1, scale: 1 }}
                         key={spare.id} 
-                        className={`bg-[#0d1425] rounded-3xl border transition-all duration-300 group overflow-hidden ${isLow ? "border-rose-500/20 shadow-[0_0_30px_rgba(244,63,94,0.05)]" : "border-blue-500/5 hover:border-blue-500/20 shadow-xl"}`}
+                        className={`bg-white rounded-3xl border transition-all duration-300 group overflow-hidden ${isLow ? "border-rose-500/20 shadow-sm" : "border-slate-200 hover:border-emerald-500/20 shadow-sm"}`}
                       >
                         <div className="p-6">
                           <div className="flex justify-between items-start mb-6">

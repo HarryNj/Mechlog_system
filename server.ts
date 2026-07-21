@@ -355,6 +355,19 @@ async function startServer() {
     }
   });
 
+  // Get current user profile
+  app.get("/api/auth/me", requireAuth, async (req: AuthRequest, res) => {
+    try {
+      if (!req.user?.uid) return res.status(401).json({ error: "Unauthorized" });
+      const user = await getUserByUid(req.user.uid);
+      if (!user) return res.status(404).json({ error: "User not found" });
+      res.json({ status: "success", user });
+    } catch (error: any) {
+      console.error("Error fetching current user:", error);
+      res.status(500).json({ error: "Failed to fetch current user", details: error.message });
+    }
+  });
+
   // BIKE REGISTRY ROUTES
   app.get("/api/bikes", requireAuth, async (req, res) => {
     try {
@@ -718,6 +731,7 @@ async function startServer() {
         phoneNumber: phoneNumber || null
       });
 
+      req.app.get("io").emit("data:updated", { type: "users" });
       res.json({ status: "success", user: updatedUser });
     } catch (error: any) {
       console.error("Error updating user:", error);
