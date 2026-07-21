@@ -11,4 +11,4 @@ googleAuthProvider.addScope('https://www.googleapis.com/auth/drive');
 googleAuthProvider.addScope('https://www.googleapis.com/auth/drive.file');
 
 
-export const db = getFirestore(app);
+export const db = getFirestore(app, firebaseConfig.firestoreDatabaseId);
