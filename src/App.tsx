@@ -2843,20 +2843,20 @@ export default function App() {
                       >
                         <div className="p-6">
                           <div className="flex justify-between items-start mb-6">
-                            <div className={`p-4 rounded-2xl border transition-colors ${isLow ? "bg-rose-500/10 text-rose-500 border-rose-500/20" : "bg-blue-500/5 text-blue-400 border-blue-500/10 group-hover:bg-blue-600 group-hover:text-white"}`}>
+                            <div className={`p-4 rounded-2xl border transition-colors ${isLow ? "bg-rose-50 text-rose-600 border-rose-100" : "bg-blue-50 text-blue-600 border-blue-100 group-hover:bg-blue-600 group-hover:text-white"}`}>
                               <Package className="w-6 h-6" />
                             </div>
                             <div className="flex gap-2">
                               <button
                                 onClick={() => openSpareModal(spare)}
-                                className="p-2.5 bg-slate-800/50 text-slate-400 hover:text-white hover:bg-blue-600 rounded-xl transition-all cursor-pointer border border-slate-700/50"
+                                className="p-2.5 bg-slate-50 text-slate-500 hover:text-blue-600 hover:bg-blue-50 rounded-xl transition-all cursor-pointer border border-slate-200"
                                 title="Edit Asset Data"
                               >
                                 <Edit className="w-4 h-4" />
                               </button>
                               <button
                                 onClick={() => handleDeleteSpare(spare.id)}
-                                className="p-2.5 bg-slate-800/50 text-slate-400 hover:text-rose-500 hover:bg-rose-500/10 rounded-xl transition-all cursor-pointer border border-slate-700/50"
+                                className="p-2.5 bg-slate-50 text-slate-500 hover:text-rose-600 hover:bg-rose-50 rounded-xl transition-all cursor-pointer border border-slate-200"
                                 title="Decommission Asset"
                               >
                                 <Trash2 className="w-4 h-4" />
@@ -2866,11 +2866,11 @@ export default function App() {
 
                           <div className="space-y-1 mb-6">
                             <div className="flex items-center justify-between">
-                              <h3 className="text-lg font-black text-white uppercase italic tracking-tight truncate pr-4" title={spare.name}>
+                              <h3 className="text-lg font-black text-slate-800 uppercase italic tracking-tight truncate pr-4" title={spare.name}>
                                 {spare.name}
                               </h3>
                               {isLow && (
-                                <span className="flex items-center gap-1.5 px-2 py-1 bg-rose-500/10 text-rose-500 text-[8px] font-black uppercase tracking-widest rounded-lg animate-pulse border border-rose-500/20">
+                                <span className="flex items-center gap-1.5 px-2 py-1 bg-rose-500/10 text-rose-600 text-[8px] font-black uppercase tracking-widest rounded-lg animate-pulse border border-rose-500/20">
                                   Critical Level
                                 </span>
                               )}
@@ -2878,16 +2878,16 @@ export default function App() {
                             <p className="text-[9px] text-slate-500 font-bold uppercase tracking-[0.2em]">Part ID: SPC-{spare.id.toString().padStart(4, "0")}</p>
                           </div>
                           
-                          <div className={`p-5 rounded-2xl border flex justify-between items-center transition-all ${isLow ? "bg-rose-500/5 border-rose-500/10" : "bg-slate-900/50 border-slate-800"}`}>
+                          <div className={`p-5 rounded-2xl border flex justify-between items-center transition-all ${isLow ? "bg-rose-50 border-rose-100" : "bg-slate-50 border-slate-200"}`}>
                             <div className="flex flex-col">
                               <span className="text-[10px] text-slate-500 font-black uppercase tracking-widest mb-1">Stock Reservoir</span>
-                              <span className={`text-2xl font-black italic tracking-tighter ${spare.quantity > 5 ? "text-emerald-500" : isLow ? "text-rose-500" : "text-amber-500"}`}>
+                              <span className={`text-2xl font-black italic tracking-tighter ${spare.quantity > 5 ? "text-emerald-600" : isLow ? "text-rose-600" : "text-amber-600"}`}>
                                 {spare.quantity} <span className="text-xs uppercase not-italic ml-1">Units</span>
                               </span>
                             </div>
                             <div className="flex flex-col items-end">
-                              <span className="text-[8px] text-slate-600 font-bold uppercase tracking-tighter mb-1">Status</span>
-                              <span className={`text-[10px] font-black uppercase italic tracking-widest ${spare.quantity > 0 ? "text-emerald-500/70" : "text-rose-500/70"}`}>
+                              <span className="text-[8px] text-slate-500 font-bold uppercase tracking-tighter mb-1">Status</span>
+                              <span className={`text-[10px] font-black uppercase italic tracking-widest ${spare.quantity > 0 ? "text-emerald-600" : "text-rose-600"}`}>
                                 {spare.quantity > 0 ? "Available" : "Depleted"}
                               </span>
                             </div>
@@ -2911,10 +2911,10 @@ export default function App() {
                           </div>
                         </div>
 
-                        <div className={`py-3 px-6 text-center border-t transition-all ${isLow ? "bg-rose-500/5 border-rose-500/10" : "bg-blue-500/5 border-blue-500/10"}`}>
+                        <div className={`py-3 px-6 text-center border-t transition-all ${isLow ? "bg-rose-50 border-rose-100" : "bg-blue-50 border-blue-100"}`}>
                           <button 
                             onClick={() => openSpareModal(spare)}
-                            className={`text-[9px] font-black uppercase tracking-[0.2em] flex items-center justify-center gap-2 mx-auto transition-colors ${isLow ? "text-rose-400 hover:text-rose-300" : "text-blue-400 hover:text-blue-300"}`}
+                            className={`text-[9px] font-black uppercase tracking-[0.2em] flex items-center justify-center gap-2 mx-auto transition-colors ${isLow ? "text-rose-600 hover:text-rose-700" : "text-blue-600 hover:text-blue-700"}`}
                           >
                             <RefreshCw className="w-3 h-3" />
                             Initiate Stock Injection
