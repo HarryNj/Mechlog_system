@@ -78,7 +78,16 @@ const mockFetch = async (url: string, options: any = {}) => {
       }
       
       const body = JSON.parse(options.body);
-      // Auto generate ID
+      
+      // Ensure ID field exists for query-based operations
+      if (!body.id) {
+        const snap = await getDocs(collection(db, collectionName));
+        const ids = snap.docs.map(d => d.data().id).filter(id => typeof id === 'number');
+        const maxId = ids.length > 0 ? Math.max(...ids) : 0;
+        body.id = maxId + 1;
+      }
+
+      // Auto generate Firestore ID
       const newRef = doc(collection(db, collectionName));
       await setDoc(newRef, body);
       return { ok: true, json: async () => ({ id: newRef.id, ...body }), status: 200, url };
