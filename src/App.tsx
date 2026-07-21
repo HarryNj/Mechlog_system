@@ -2410,9 +2410,9 @@ export default function App() {
                     initial={{ opacity: 0, y: 20 }}
                     animate={{ opacity: 1, y: 0 }}
                     transition={{ delay: 0.8 }}
-                    className="bg-slate-700 p-6 rounded-2xl border border-emerald-500/10 shadow-[0_0_30px_rgba(16,185,129,0.03)] flex flex-col h-full"
+                    className="bg-white p-6 rounded-2xl border border-emerald-500/20 shadow-[0_0_30px_rgba(16,185,129,0.05)] flex flex-col h-full"
                   >
-                    <h3 className="text-[10px] font-black text-emerald-200 mb-1 flex items-center gap-1.5 uppercase tracking-widest italic">
+                    <h3 className="text-[10px] font-black text-emerald-700 mb-1 flex items-center gap-1.5 uppercase tracking-widest italic">
                       <CheckCircle className="w-4 h-4" />
                       Maintenance Executed
                     </h3>
@@ -2420,7 +2420,7 @@ export default function App() {
                     
                     <div className="flex-1 overflow-y-auto space-y-3 pr-1.5 custom-scrollbar">
                       {logsList.filter(l => l.status === "done").length === 0 ? (
-                        <div className="text-center py-20 text-slate-700 italic text-[10px] uppercase font-black tracking-widest opacity-30">
+                        <div className="text-center py-20 text-slate-400 italic text-[10px] uppercase font-black tracking-widest opacity-50">
                           Empty execution history
                         </div>
                       ) : (
@@ -2439,7 +2439,7 @@ export default function App() {
                             <div className="text-slate-500 text-[9px] font-black uppercase tracking-widest mb-2 opacity-60">
                               {log.officer} // {log.district}
                             </div>
-                            <div className="bg-emerald-500/5 p-2 rounded-lg border border-emerald-500/10 text-[10px] text-emerald-200/70 font-medium italic leading-relaxed mb-2">
+                            <div className="bg-emerald-50 p-2 rounded-lg border border-emerald-200 text-[10px] text-emerald-800 font-medium italic leading-relaxed mb-2">
                               {log.workDone || "Standard maintenance protocols applied"}
                             </div>
                             {log.spares && log.spares.length > 0 && (
@@ -2462,9 +2462,9 @@ export default function App() {
                     initial={{ opacity: 0, y: 20 }}
                     animate={{ opacity: 1, y: 0 }}
                     transition={{ delay: 0.9 }}
-                    className="bg-slate-700 p-6 rounded-2xl border border-amber-500/10 shadow-[0_0_30px_rgba(245,158,11,0.03)] flex flex-col h-full"
+                    className="bg-white p-6 rounded-2xl border border-amber-500/20 shadow-[0_0_30px_rgba(245,158,11,0.05)] flex flex-col h-full"
                   >
-                    <h3 className="text-[10px] font-black text-amber-200 mb-1 flex items-center gap-1.5 uppercase tracking-widest italic">
+                    <h3 className="text-[10px] font-black text-amber-700 mb-1 flex items-center gap-1.5 uppercase tracking-widest italic">
                       <Clock className="w-4 h-4" />
                       Active Alerts (Pending)
                     </h3>
@@ -2472,7 +2472,7 @@ export default function App() {
                     
                     <div className="flex-1 overflow-y-auto space-y-3 pr-1.5 custom-scrollbar">
                       {logsList.filter(l => l.status === "pending").length === 0 ? (
-                        <div className="text-center py-20 text-emerald-500/30 italic text-[10px] uppercase font-black tracking-widest">
+                        <div className="text-center py-20 text-emerald-600/50 italic text-[10px] uppercase font-black tracking-widest">
                           All systems operational
                         </div>
                       ) : (
@@ -2491,7 +2491,7 @@ export default function App() {
                             <div className="text-slate-500 text-[9px] font-black uppercase tracking-widest mb-2 opacity-60">
                               {log.officer} // {log.district}
                             </div>
-                            <div className="bg-amber-500/5 p-2 rounded-lg border border-amber-500/10 text-[10px] text-amber-200/70 font-medium italic leading-relaxed mb-2">
+                            <div className="bg-amber-50 p-2 rounded-lg border border-amber-200 text-[10px] text-amber-800 font-medium italic leading-relaxed mb-2">
                               {log.workPending || "Maintenance sequence pending validation"}
                             </div>
                             {log.spares && log.spares.length > 0 && (
