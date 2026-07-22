@@ -205,6 +205,7 @@ interface ServiceLogType {
   district: string;
   workDone: string | null;
   workPending: string | null;
+  comment: string | null;
   status: string;
   bike?: BikeType;
   spares?: LogSpareType[];
@@ -532,6 +533,7 @@ export default function App() {
     district: "",
     workDone: "",
     workPending: "",
+    comment: "",
     status: "pending",
     sparesUsed: [] as { spareId: string; quantity: number }[]
   });
@@ -1110,6 +1112,7 @@ export default function App() {
         district: matchingBike ? matchingBike.district : "",
         workDone: `[Attending request: ${reqObj.serviceType}] - ${reqObj.problemDescription}`,
         workPending: "",
+        comment: "",
         status: "done",
         sparesUsed: []
       });
@@ -1264,6 +1267,7 @@ export default function App() {
         district: log.district,
         workDone: log.workDone || "",
         workPending: log.workPending || "",
+        comment: log.comment || "",
         status: log.status,
         sparesUsed: log.spares ? log.spares.map(s => ({ spareId: String(s.spareId), quantity: s.quantity })) : []
       });
@@ -1280,6 +1284,7 @@ export default function App() {
         district: "",
         workDone: "",
         workPending: "",
+        comment: "",
         status: "pending",
         sparesUsed: []
       });
@@ -1338,6 +1343,7 @@ export default function App() {
           district: logForm.district,
           workDone: logForm.workDone || null,
           workPending: logForm.workPending || null,
+          comment: logForm.comment || null,
           status: logForm.status,
           spares: logForm.sparesUsed.map(s => ({ spareId: parseInt(s.spareId), quantity: s.quantity }))
         })
@@ -1471,6 +1477,9 @@ export default function App() {
     const pendingWorksList: string[] = [];
     const sparesDetailsMap: { [name: string]: number } = {};
 
+    const sortedLogs = [...bikeLogs].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+    const latestLog = sortedLogs[0];
+
     bikeLogs.forEach(log => {
       if (log.spares) {
         log.spares.forEach(s => {
@@ -1478,7 +1487,7 @@ export default function App() {
           sparesDetailsMap[s.spareName] = (sparesDetailsMap[s.spareName] || 0) + s.quantity;
         });
       }
-      if (log.status === "pending" && log.workPending) {
+      if (log.workPending) {
         pendingWorksList.push(log.workPending);
       }
     });
@@ -1486,10 +1495,12 @@ export default function App() {
     acc[bike.id] = {
       sparesUsed: sparesTotalForBike,
       sparesDetails: Object.entries(sparesDetailsMap).map(([name, qty]) => ({ name, qty })),
-      pendingWork: pendingWorksList.join(" | ") || "None"
+      pendingWork: pendingWorksList.join(" | ") || "None",
+      nextServiceDate: latestLog?.nextServiceDate || null,
+      nextServiceMileage: latestLog?.nextServiceMileage || null,
     };
     return acc;
-  }, {} as { [bikeId: number]: { sparesUsed: number; sparesDetails: { name: string; qty: number }[]; pendingWork: string } });
+  }, {} as { [bikeId: number]: { sparesUsed: number; sparesDetails: { name: string; qty: number }[]; pendingWork: string; nextServiceDate: string | null; nextServiceMileage: number | null } });
 
   // Total bikes by each district
   const bikesByDistrict = bikesList.reduce((acc, bike) => {
@@ -1560,6 +1571,7 @@ export default function App() {
       log.officer.toLowerCase().includes(logSearch.toLowerCase()) ||
       (log.bikeReg || "").toLowerCase().includes(logSearch.toLowerCase()) ||
       (log.workDone && log.workDone.toLowerCase().includes(logSearch.toLowerCase())) ||
+      (log.comment && log.comment.toLowerCase().includes(logSearch.toLowerCase())) ||
       (log.workPending && log.workPending.toLowerCase().includes(logSearch.toLowerCase()));
 
     const matchesStatus = !logStatusFilter || log.status === logStatusFilter;
@@ -2285,12 +2297,13 @@ export default function App() {
                             <th className="pb-4 px-4">Identification</th>
                             <th className="pb-4 px-4">Deployment</th>
                             <th className="pb-4 px-4 text-center">Resource Utilization</th>
-                            <th className="pb-4 px-4">System Alerts</th>
+                            <th className="pb-4 px-4">System Alerts & Pending</th>
+                            <th className="pb-4 px-4">Next Service</th>
                           </tr>
                         </thead>
                         <tbody>
                           {bikesList.map((bike, idx) => {
-                            const stats = bikeStatsMap[bike.id] || { sparesUsed: 0, sparesDetails: [], pendingWork: "None" };
+                            const stats = bikeStatsMap[bike.id] || { sparesUsed: 0, sparesDetails: [], pendingWork: "None", nextServiceDate: null, nextServiceMileage: null };
                             return (
                               <motion.tr 
                                 initial={{ opacity: 0, y: 10 }}
@@ -2326,11 +2339,11 @@ export default function App() {
                                     )}
                                   </div>
                                 </td>
-                                <td className="py-4 px-4 rounded-r-xl border-y border-r border-emerald-500/5">
+                                <td className="py-4 px-4 border-y border-emerald-500/5">
                                   {stats.pendingWork !== "None" ? (
-                                    <div className="flex items-center gap-2 text-amber-600 animate-pulse">
-                                      <AlertCircle className="w-4 h-4 flex-shrink-0" />
-                                      <span className="text-[10px] font-black uppercase tracking-wider truncate max-w-[120px]">{stats.pendingWork}</span>
+                                    <div className="flex items-start gap-2 text-amber-600">
+                                      <AlertCircle className="w-4 h-4 flex-shrink-0 mt-0.5" />
+                                      <span className="text-[10px] font-bold tracking-wider max-w-[150px] whitespace-normal line-clamp-3">{stats.pendingWork}</span>
                                     </div>
                                   ) : (
                                     <div className="flex items-center gap-2 text-emerald-600">
@@ -2338,6 +2351,20 @@ export default function App() {
                                       <span className="text-[10px] font-bold uppercase tracking-wider">Nominal</span>
                                     </div>
                                   )}
+                                </td>
+                                <td className="py-4 px-4 rounded-r-xl border-y border-r border-emerald-500/5">
+                                  <div className="flex flex-col gap-1">
+                                    {stats.nextServiceDate ? (
+                                      <span className="text-[10px] font-bold text-slate-700 flex items-center gap-1.5"><Calendar className="w-3 h-3 text-emerald-600" /> {stats.nextServiceDate}</span>
+                                    ) : (
+                                      <span className="text-[10px] text-slate-400 italic">No date</span>
+                                    )}
+                                    {stats.nextServiceMileage ? (
+                                      <span className="text-[10px] font-bold text-slate-700 flex items-center gap-1.5"><TrendingUp className="w-3 h-3 text-emerald-600" /> {stats.nextServiceMileage} KM</span>
+                                    ) : (
+                                      <span className="text-[10px] text-slate-400 italic">No mileage</span>
+                                    )}
+                                  </div>
                                 </td>
                               </motion.tr>
                             );
@@ -2653,6 +2680,7 @@ export default function App() {
                           <th className="px-6 py-4">Mileage</th>
                           <th className="px-6 py-4">District</th>
                           <th className="px-6 py-4">Work Done</th>
+                          <th className="px-6 py-4">Comment</th>
                           <th className="px-6 py-4">Spares Used</th>
                           <th className="px-6 py-4">Status</th>
                           <th className="px-6 py-4 text-center">Actions</th>
@@ -2679,6 +2707,9 @@ export default function App() {
                               </td>
                               <td className="px-6 py-4 max-w-xs truncate" title={log.workDone || ""}>
                                 {log.workDone || <span className="text-slate-400 italic">None</span>}
+                              </td>
+                              <td className="px-6 py-4 max-w-xs truncate" title={log.comment || ""}>
+                                {log.comment || <span className="text-slate-400 italic">-</span>}
                               </td>
                               <td className="px-6 py-4">
                                 <div className="flex flex-wrap gap-1.5 max-w-xs">
@@ -3477,6 +3508,18 @@ export default function App() {
                   placeholder="Describe pending actions to follow up in future services..."
                   value={logForm.workPending}
                   onChange={(e) => setLogForm(prev => ({ ...prev, workPending: e.target.value }))}
+                  className="w-full px-4 py-2.5 rounded-xl border border-slate-200 text-sm focus:ring-2 focus:ring-blue-500 outline-none h-16 resize-none text-slate-900"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-1.5">
+                  Additional Comment
+                </label>
+                <textarea
+                  placeholder="Any additional observations or comments..."
+                  value={logForm.comment}
+                  onChange={(e) => setLogForm(prev => ({ ...prev, comment: e.target.value }))}
                   className="w-full px-4 py-2.5 rounded-xl border border-slate-200 text-sm focus:ring-2 focus:ring-blue-500 outline-none h-16 resize-none text-slate-900"
                 />
               </div>
