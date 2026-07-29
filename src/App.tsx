@@ -34,7 +34,9 @@ import {
   Cpu,
   ExternalLink,
   Zap,
-  Database
+  Database,
+  AlertTriangle,
+  TrendingUp
 } from "lucide-react";
 import * as XLSX from "xlsx";
 
@@ -1498,15 +1500,64 @@ export default function App() {
       pendingWork: pendingWorksList.join(" | ") || "None",
       nextServiceDate: latestLog?.nextServiceDate || null,
       nextServiceMileage: latestLog?.nextServiceMileage || null,
+      currentMileage: latestLog?.mileage || 0,
     };
     return acc;
-  }, {} as { [bikeId: number]: { sparesUsed: number; sparesDetails: { name: string; qty: number }[]; pendingWork: string; nextServiceDate: string | null; nextServiceMileage: number | null } });
+  }, {} as { [bikeId: number]: { sparesUsed: number; sparesDetails: { name: string; qty: number }[]; pendingWork: string; nextServiceDate: string | null; nextServiceMileage: number | null; currentMileage: number } });
 
   // Total bikes by each district
   const bikesByDistrict = bikesList.reduce((acc, bike) => {
     acc[bike.district] = (acc[bike.district] || 0) + 1;
     return acc;
   }, {} as { [district: string]: number });
+
+  // Calculate upcoming service alerts
+  const upcomingServiceAlerts = bikesList.map(bike => {
+    const stats = bikeStatsMap[bike.id];
+    if (!stats) return null;
+
+    let isUpcoming = false;
+    const reasons: string[] = [];
+
+    // Check Date (Upcoming if within 14 days)
+    if (stats.nextServiceDate) {
+      const targetDate = new Date(stats.nextServiceDate);
+      const today = new Date();
+      const diffTime = targetDate.getTime() - today.getTime();
+      const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+      
+      if (diffDays <= 14 && diffDays >= 0) {
+        isUpcoming = true;
+        reasons.push(`Service due in ${diffDays} days (${stats.nextServiceDate})`);
+      } else if (diffDays < 0) {
+        isUpcoming = true;
+        reasons.push(`Overdue since ${stats.nextServiceDate}`);
+      }
+    }
+
+    // Check Mileage (Upcoming if within 1000 KM)
+    if (stats.nextServiceMileage) {
+      const remainingKM = stats.nextServiceMileage - stats.currentMileage;
+      if (remainingKM <= 1000 && remainingKM > 0) {
+        isUpcoming = true;
+        reasons.push(`${remainingKM} KM remaining until service target (${stats.nextServiceMileage} KM)`);
+      } else if (remainingKM <= 0) {
+        isUpcoming = true;
+        reasons.push(`Mileage target exceeded by ${Math.abs(remainingKM)} KM`);
+      }
+    }
+
+    if (isUpcoming) {
+      return {
+        ...bike,
+        reasons,
+        nextServiceDate: stats.nextServiceDate,
+        nextServiceMileage: stats.nextServiceMileage,
+        currentMileage: stats.currentMileage
+      };
+    }
+    return null;
+  }).filter((b): b is NonNullable<typeof b> => b !== null);
 
   // Export full database to Excel format with multi-sheet workbook
   const exportToExcel = () => {
@@ -2165,6 +2216,56 @@ export default function App() {
               {/* Quick Admin Protocol (Shortcut Matrix) */}
 
 
+              {/* Row 1: Upcoming Service Alerts & System Health */}
+              {upcomingServiceAlerts.length > 0 && (
+                <motion.div 
+                  initial={{ opacity: 0, y: 20 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ delay: 0.45 }}
+                  className="mb-8"
+                >
+                  <div className="flex items-center gap-3 mb-4">
+                    <div className="p-2 bg-amber-50 rounded-lg border border-amber-200">
+                      <AlertTriangle className="w-5 h-5 text-amber-600" />
+                    </div>
+                    <div>
+                      <h3 className="text-sm font-black text-slate-800 uppercase tracking-widest italic">Upcoming Service Alerts</h3>
+                      <p className="text-[10px] text-slate-500 font-bold uppercase tracking-wider">Critical maintenance windows identified for {upcomingServiceAlerts.length} units</p>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+                    {upcomingServiceAlerts.map((alert, idx) => (
+                      <motion.div 
+                        key={alert.id}
+                        initial={{ opacity: 0, scale: 0.95 }}
+                        animate={{ opacity: 1, scale: 1 }}
+                        transition={{ delay: 0.5 + (idx * 0.05) }}
+                        className="bg-white p-4 rounded-2xl border-l-4 border-l-amber-500 border-y border-r border-slate-200 shadow-sm hover:shadow-md transition-shadow group"
+                      >
+                        <div className="flex justify-between items-start mb-3">
+                          <div>
+                            <h4 className="font-black text-slate-900 group-hover:text-amber-700 transition-colors">{alert.regNo}</h4>
+                            <p className="text-[10px] text-slate-500 font-bold uppercase tracking-wider">{alert.officer} // {alert.district}</p>
+                          </div>
+                          <div className="p-1.5 bg-amber-50 text-amber-600 rounded-lg group-hover:bg-amber-100 transition-colors">
+                            <Clock className="w-4 h-4" />
+                          </div>
+                        </div>
+                        <div className="space-y-1.5">
+                          {alert.reasons.map((reason, rIdx) => (
+                            <div key={rIdx} className="flex items-start gap-2 text-[10px] text-amber-800 font-bold bg-amber-50/50 p-2 rounded-lg border border-amber-200/50">
+                              <span className="mt-1 w-1 h-1 bg-amber-500 rounded-full flex-shrink-0" />
+                              {reason}
+                            </div>
+                          ))}
+                        </div>
+                      </motion.div>
+                    ))}
+                  </div>
+                </motion.div>
+              )}
+
               {/* Grid with spares breakdown & bike lists */}
               <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
                 
@@ -2612,6 +2713,56 @@ export default function App() {
                   </div>
                 </div>
               </div>
+
+              {/* Row 5: Global Spare Inventory Matrix */}
+              <motion.div 
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ delay: 1.1 }}
+                className="mt-8 bg-white p-6 rounded-2xl border border-emerald-500/10 shadow-sm"
+              >
+                <div className="flex justify-between items-center mb-6">
+                  <div>
+                    <h3 className="text-sm font-black text-slate-800 flex items-center gap-2 uppercase tracking-widest italic">
+                      <Package className="w-4 h-4 text-emerald-600" />
+                      Global Spare Inventory Matrix
+                    </h3>
+                    <p className="text-[10px] text-slate-500 font-bold uppercase tracking-wider">Comprehensive stock summary across all hardware categories</p>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Total Types:</span>
+                    <span className="text-sm font-black text-emerald-600">{sparesList.length}</span>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-6 gap-4">
+                  {sparesList.map((spare, idx) => (
+                    <motion.div 
+                      key={spare.id}
+                      initial={{ opacity: 0, scale: 0.9 }}
+                      animate={{ opacity: 1, scale: 1 }}
+                      transition={{ delay: 1.2 + (idx * 0.02) }}
+                      className="bg-slate-50/50 p-4 rounded-xl border border-slate-100 hover:border-emerald-500/20 hover:bg-emerald-50/30 transition-all group"
+                    >
+                      <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1 group-hover:text-emerald-600 transition-colors">Category</p>
+                      <h4 className="text-sm font-black text-slate-800 mb-3 truncate" title={spare.name}>{spare.name}</h4>
+                      <div className="flex justify-between items-end">
+                        <span className="text-[10px] text-slate-500 font-bold uppercase">In Stock</span>
+                        <span className={`text-lg font-black tracking-tighter ${spare.quantity > 5 ? "text-emerald-600" : spare.quantity > 0 ? "text-amber-500" : "text-rose-500"}`}>
+                          {spare.quantity}
+                        </span>
+                      </div>
+                      <div className="mt-2 h-1 bg-slate-200 rounded-full overflow-hidden">
+                        <div 
+                          className={`h-full transition-all duration-1000 ${spare.quantity > 5 ? "bg-emerald-500" : spare.quantity > 0 ? "bg-amber-500" : "bg-rose-500"}`}
+                          style={{ width: `${Math.min(100, (spare.quantity / 20) * 100)}%` }}
+                        />
+                      </div>
+                    </motion.div>
+                  ))}
+                </div>
+              </motion.div>
+
             </div>
           )}
 
