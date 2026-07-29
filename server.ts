@@ -863,6 +863,16 @@ async function startServer() {
 
 
 
+  // Error handling middleware
+  app.use((err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {
+    console.error("Unhandled Server Error:", err);
+    res.status(500).json({ 
+      error: "Internal Server Error", 
+      message: err.message,
+      path: req.path
+    });
+  });
+
   // --- VITE MIDDLEWARE SETUP ---
 
   if (process.env.NODE_ENV !== "production") {

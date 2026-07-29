@@ -16,7 +16,7 @@ import {
 } from 'firebase/firestore';
 import { initializeApp as initAdminApp, getApps as getAdminApps } from 'firebase-admin/app';
 import { getAuth } from 'firebase-admin/auth';
-import firebaseConfig from '../../firebase-applet-config.json' with { type: 'json' };
+import firebaseConfig from '../../firebase-applet-config.json';
 
 // Initialize Admin App (only for Auth token verification, which doesn't need DB access)
 if (!getAdminApps().length) {

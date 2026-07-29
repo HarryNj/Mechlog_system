@@ -51,6 +51,13 @@ const mockFetch = async (url: string, options: any = {}) => {
   const id = segments[1];
   try {
     if (method === 'GET') {
+      if (path === 'auth/me') {
+        const stored = localStorage.getItem("eff_user_session");
+        if (stored) {
+          return { ok: true, json: async () => ({ status: 'success', user: JSON.parse(stored) }), status: 200, url };
+        }
+        return { ok: false, status: 401, json: async () => ({ error: 'Not logged in' }), url };
+      }
       if (id) {
         const snap = await getDoc(doc(db, collectionName, id));
         if (!snap.exists()) return { ok: false, status: 404, statusText: "Not found", json: async () => ({ error: "Not found" }), url };
@@ -95,42 +102,55 @@ const mockFetch = async (url: string, options: any = {}) => {
       const body = JSON.parse(options.body);
       console.log(`PUT request: collection=${collectionName}, id=${id}, body=`, body);
       let docRef;
-      if (collectionName === 'users') {
-        docRef = doc(db, 'users', id);
+      
+      // Try direct document ID first
+      const directRef = doc(db, collectionName, id);
+      const directSnap = await getDoc(directRef);
+      
+      if (directSnap.exists()) {
+        docRef = directRef;
       } else {
-        const q = query(collection(db, collectionName), where("id", "==", parseInt(id)));
+        // Fallback to searching by 'id' field
+        const isNumeric = /^\d+$/.test(id);
+        const q = query(collection(db, collectionName), where("id", "==", isNumeric ? parseInt(id) : id));
         const snap = await getDocs(q);
-        console.log(`PUT query result (number): empty=${snap.empty}, id=${parseInt(id)}`);
+        
         if (snap.empty) {
-          // Try searching by string id if parseInt failed or id field is string
-          const q2 = query(collection(db, collectionName), where("id", "==", id));
-          const snap2 = await getDocs(q2);
-          console.log(`PUT query result (string): empty=${snap2.empty}, id=${id}`);
+          // Final attempt: search by string id even if it looks numeric
+          const snap2 = await getDocs(query(collection(db, collectionName), where("id", "==", id)));
           if (snap2.empty) return { ok: false, status: 404, statusText: "Not found", json: async () => ({ error: "Not found" }), url };
           docRef = snap2.docs[0].ref;
         } else {
           docRef = snap.docs[0].ref;
         }
       }
+      
       await updateDoc(docRef, body);
       return { ok: true, json: async () => ({ id, ...body }), status: 200, url };
     } else if (method === 'DELETE') {
       console.log(`DELETE request: collection=${collectionName}, id=${id}`);
       let docRef;
-      if (collectionName === 'users') {
-        docRef = doc(db, 'users', id);
+      
+      // Try direct document ID first
+      const directRef = doc(db, collectionName, id);
+      const directSnap = await getDoc(directRef);
+      
+      if (directSnap.exists()) {
+        docRef = directRef;
       } else {
-        const q = query(collection(db, collectionName), where("id", "==", parseInt(id)));
+        const isNumeric = /^\d+$/.test(id);
+        const q = query(collection(db, collectionName), where("id", "==", isNumeric ? parseInt(id) : id));
         const snap = await getDocs(q);
+        
         if (snap.empty) {
-          const q2 = query(collection(db, collectionName), where("id", "==", id));
-          const snap2 = await getDocs(q2);
+          const snap2 = await getDocs(query(collection(db, collectionName), where("id", "==", id)));
           if (snap2.empty) return { ok: false, status: 404, statusText: "Not found", json: async () => ({ error: "Not found" }), url };
           docRef = snap2.docs[0].ref;
         } else {
           docRef = snap.docs[0].ref;
         }
       }
+      
       await deleteDoc(docRef);
       return { ok: true, json: async () => ({ status: 'success' }), status: 200, url };
     }
@@ -373,9 +393,12 @@ export default function App() {
   
   const [loading, setLoading] = useState(true);
   const [syncing, setSyncing] = useState(false);
+  const [isOnline, setIsOnline] = useState(typeof window !== 'undefined' ? window.navigator.onLine : true);
+  const [lastSynced, setLastSynced] = useState<Date | null>(() => {
+    const stored = localStorage.getItem("lastSynced");
+    return stored ? new Date(stored) : null;
+  });
   const [dbLayer, setDbLayer] = useState<"firestore" | "sql">("firestore");
-  const [lastSynced, setLastSynced] = useState<Date>(new Date());
-  const [isOnline, setIsOnline] = useState(typeof navigator !== 'undefined' ? navigator.onLine : true);
   const [offlineQueue, setOfflineQueue] = useState<any[]>(() => {
     try { return JSON.parse(localStorage.getItem('eff_offline_queue') || '[]'); }
     catch { return []; }
@@ -605,12 +628,27 @@ export default function App() {
   const fetchData = async (currentUser = user, syncedDbUser = dbUser, isSilent = false) => {
     if (!currentUser) return;
     if (!isSilent) setSyncing(true);
+    
+    // Update online status
+    const currentOnline = window.navigator.onLine;
+    setIsOnline(currentOnline);
+
+    if (currentOnline && offlineQueue.length > 0) {
+      await processOfflineQueue();
+    }
+
     try {
       const token = "dummy-token";
       const headers = { "Authorization": `Bearer ${token}` };
 
       // Refresh user role
-      const userRes = await mockFetch("/api/auth/me", { headers });
+      let userRes;
+      try {
+        userRes = await mockFetch("/api/auth/me", { headers });
+      } catch (e) {
+        userRes = { ok: false };
+      }
+
       let finalDbUser = syncedDbUser;
       if (userRes.ok) {
         const userData = await userRes.json();
@@ -619,6 +657,12 @@ export default function App() {
           setDbUser(finalDbUser);
           saveToStorage("dbUser", finalDbUser);
         }
+      } else {
+        const cachedUser = loadFromStorage("dbUser");
+        if (cachedUser && !Array.isArray(cachedUser)) {
+          finalDbUser = cachedUser;
+          setDbUser(cachedUser);
+        }
       }
 
       const lowerEmail = currentUser.email?.toLowerCase() || "";
@@ -626,49 +670,52 @@ export default function App() {
       const isAdminUser = finalDbUser?.role === "admin" || isAdminEmail;
 
       const fetchPromises: Promise<any>[] = [
-        mockFetch("/api/bikes", { headers }),
-        mockFetch("/api/spares", { headers }),
-        mockFetch("/api/logs", { headers }),
-        mockFetch("/api/requests", { headers })
+        mockFetch("/api/bikes", { headers }).catch(e => ({ ok: false })),
+        mockFetch("/api/spares", { headers }).catch(e => ({ ok: false })),
+        mockFetch("/api/logs", { headers }).catch(e => ({ ok: false })),
+        mockFetch("/api/requests", { headers }).catch(e => ({ ok: false }))
       ];
 
       if (isAdminUser) {
-        fetchPromises.push(mockFetch("/api/users", { headers }));
+        fetchPromises.push(mockFetch("/api/users", { headers }).catch(e => ({ ok: false })));
       }
 
       const results = await Promise.all(fetchPromises);
       
-      // Log errors if any fetch failed
-      results.forEach((r, i) => {
-        if (!r.ok) {
-          console.error(`Fetch failed for index ${i} (${r.url}): ${r.status} ${r.statusText}`);
-        }
-      });
-      
+      // Bikes
       let freshBikes: any[] = [];
       if (results[0].ok) {
         freshBikes = await results[0].json();
         setBikesList(freshBikes);
         saveToStorage("bikes", freshBikes);
+      } else {
+        freshBikes = loadFromStorage("bikes") || [];
+        setBikesList(freshBikes);
       }
+
+      // Spares
       let freshSpares: any[] = [];
       if (results[1].ok) {
         freshSpares = await results[1].json();
         setSparesList(freshSpares);
         saveToStorage("spares", freshSpares);
+      } else {
+        freshSpares = loadFromStorage("spares") || [];
+        setSparesList(freshSpares);
       }
 
+      // Logs
       if (results[2].ok) {
         const data = await results[2].json();
         const mappedLogs = data.map((l: any) => {
-          const bikeInfo = l.bike || freshBikes.find((b: any) => b.id === l.bikeId);
+          const bikeInfo = l.bike || freshBikes.find((b: any) => String(b.id) === String(l.bikeId));
           return {
             ...l,
             bikeReg: bikeInfo?.regNo || `Bike #${l.bikeId}`,
             spares: l.spares?.map((s: any) => {
               let name = s.spareName;
               if (!name || name === "undefined" || name === "null") {
-                const spareInfo = freshSpares.find((sp: any) => sp.id === s.spareId);
+                const spareInfo = freshSpares.find((sp: any) => String(sp.id) === String(s.spareId));
                 name = spareInfo?.name || `Spare ID ${s.spareId}`;
               }
               return { ...s, spareName: name };
@@ -677,27 +724,68 @@ export default function App() {
         });
         setLogsList(mappedLogs);
         saveToStorage("logs", mappedLogs);
+      } else {
+        setLogsList(loadFromStorage("logs") || []);
       }
+
+      // Requests
       if (results[3].ok) {
         const data = await results[3].json();
         setServiceRequestsList(data);
         saveToStorage("requests", data);
+      } else {
+        setServiceRequestsList(loadFromStorage("requests") || []);
       }
+
+      // Admin Users
       if (isAdminUser) {
         if (results[4] && results[4].ok) {
           const data = await results[4].json();
           setUsersList(data);
           saveToStorage("users", data);
+        } else {
+          setUsersList(loadFromStorage("users") || []);
         }
       }
       
-      setLastSynced(new Date());
+      const allOk = results.every(r => r.ok);
+      if (allOk) {
+        const now = new Date();
+        setLastSynced(now);
+        localStorage.setItem("lastSynced", now.toISOString());
+        setIsOnline(true);
+      } else {
+        setIsOnline(false);
+      }
     } catch (err) {
-      console.error("Error fetching data:", err);
+      console.warn("Network error, falling back to local storage:", err);
+      setIsOnline(false);
+      setBikesList(loadFromStorage("bikes") || []);
+      setSparesList(loadFromStorage("spares") || []);
+      setLogsList(loadFromStorage("logs") || []);
+      setServiceRequestsList(loadFromStorage("requests") || []);
+      const cachedUser = loadFromStorage("dbUser");
+      if (cachedUser && !Array.isArray(cachedUser)) setDbUser(cachedUser);
     } finally {
       if (!isSilent) setSyncing(false);
     }
   };
+
+  useEffect(() => {
+    const handleOnline = () => {
+      setIsOnline(true);
+      processOfflineQueue();
+    };
+    const handleOffline = () => setIsOnline(false);
+
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
+
+    return () => {
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
+    };
+  }, [offlineQueue]);
 
   const fetchDataRef = useRef(fetchData);
   useEffect(() => { fetchDataRef.current = fetchData; });
@@ -2099,13 +2187,23 @@ export default function App() {
               </span>
               <div className="flex flex-col text-left">
                 <span className={`text-[9px] font-black uppercase tracking-widest leading-none ${isOnline ? "text-emerald-600" : "text-amber-600"}`}>
-                  {isOnline ? "System Uplink" : "Local Buffer"}
+                  {isOnline ? "System Uplink" : "Offline Mode"}
                 </span>
                 <span className="text-[8px] text-slate-500 font-bold uppercase tracking-tighter leading-none mt-1">
-                  {isOnline ? `Sync: ${lastSynced.toLocaleTimeString()}` : "Auth required"}
+                  {isOnline ? `Sync: ${lastSynced ? lastSynced.toLocaleTimeString() : 'Never'}` : `${offlineQueue.length} Pending Actions`}
                 </span>
               </div>
             </div>
+
+            {offlineQueue.length > 0 && isOnline && (
+              <button
+                onClick={() => processOfflineQueue()}
+                className="bg-amber-100 text-amber-600 hover:bg-amber-200 px-3 py-2 rounded-xl text-[10px] font-black flex items-center gap-1.5 shadow-sm transition-all animate-pulse"
+              >
+                <RefreshCw className="w-3.5 h-3.5" />
+                Sync Pending ({offlineQueue.length})
+              </button>
+            )}
 
             {syncing && (
               <span className="flex items-center gap-1.5 text-xs text-emerald-600 font-medium">
