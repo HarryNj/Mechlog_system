@@ -650,16 +650,26 @@ export default function App() {
         setBikesList(data);
         saveToStorage("bikes", data);
       }
+      let freshSpares: any[] = [];
       if (results[1].ok) {
-        const data = await results[1].json();
-        setSparesList(data);
-        saveToStorage("spares", data);
+        freshSpares = await results[1].json();
+        setSparesList(freshSpares);
+        saveToStorage("spares", freshSpares);
       }
+
       if (results[2].ok) {
         const data = await results[2].json();
         const mappedLogs = data.map((l: any) => ({
           ...l,
-          bikeReg: l.bike?.regNo || `Bike #${l.bikeId}`
+          bikeReg: l.bike?.regNo || `Bike #${l.bikeId}`,
+          spares: l.spares?.map((s: any) => {
+            let name = s.spareName;
+            if (!name || name === "undefined" || name === "null") {
+              const spareInfo = freshSpares.find((sp: any) => sp.id === s.spareId);
+              name = spareInfo?.name || `Spare ID ${s.spareId}`;
+            }
+            return { ...s, spareName: name };
+          })
         }));
         setLogsList(mappedLogs);
         saveToStorage("logs", mappedLogs);
@@ -1347,7 +1357,14 @@ export default function App() {
           workPending: logForm.workPending || null,
           comment: logForm.comment || null,
           status: logForm.status,
-          spares: logForm.sparesUsed.map(s => ({ spareId: parseInt(s.spareId), quantity: s.quantity }))
+          spares: logForm.sparesUsed.map(s => {
+            const spareInfo = sparesList.find(sl => String(sl.id) === s.spareId);
+            return { 
+              spareId: parseInt(s.spareId), 
+              spareName: spareInfo?.name || `Spare ID ${s.spareId}`,
+              quantity: s.quantity 
+            };
+          })
         })
       });
 
@@ -1441,7 +1458,12 @@ export default function App() {
   logsList.forEach(log => {
     if (!log.spares) return;
     log.spares.forEach(s => {
-      sparesUsedBreakdown[s.spareName] = (sparesUsedBreakdown[s.spareName] || 0) + s.quantity;
+      let name = s.spareName;
+      if (!name || name === "undefined" || name === "null") {
+        const spareInfo = sparesList.find(sl => sl.id === s.spareId);
+        name = spareInfo?.name || `Spare ID ${s.spareId || '?'}`;
+      }
+      sparesUsedBreakdown[name] = (sparesUsedBreakdown[name] || 0) + s.quantity;
     });
   });
 
@@ -1485,8 +1507,16 @@ export default function App() {
     bikeLogs.forEach(log => {
       if (log.spares) {
         log.spares.forEach(s => {
+          let name = s.spareName;
+          
+          // Fallback to sparesList lookup if name is missing or "undefined" string
+          if (!name || name === "undefined" || name === "null") {
+            const spareInfo = sparesList.find(sl => sl.id === s.spareId);
+            name = spareInfo?.name || `Spare ID ${s.spareId || '?'}`;
+          }
+          
           sparesTotalForBike += s.quantity;
-          sparesDetailsMap[s.spareName] = (sparesDetailsMap[s.spareName] || 0) + s.quantity;
+          sparesDetailsMap[name] = (sparesDetailsMap[name] || 0) + s.quantity;
         });
       }
       if (log.workPending) {
@@ -1585,7 +1615,14 @@ export default function App() {
         "Work Done": l.workDone || "None",
         "Work Pending": l.workPending || "None",
         "Spares Used": l.spares && l.spares.length > 0 
-          ? l.spares.map(s => `${s.spareName} (${s.quantity})`).join(", ") 
+          ? l.spares.map(s => {
+              let name = s.spareName;
+              if (!name || name === "undefined" || name === "null") {
+                const spareInfo = sparesList.find(sl => sl.id === s.spareId);
+                name = spareInfo?.name || `Spare ID ${s.spareId || '?'}`;
+              }
+              return `${name} (${s.quantity})`;
+            }).join(", ") 
           : "None",
         "Status": l.status.toUpperCase()
       }));
@@ -2428,14 +2465,11 @@ export default function App() {
                                     </span>
                                     {stats.sparesDetails && stats.sparesDetails.length > 0 && (
                                       <div className="flex flex-wrap gap-1 justify-center max-w-[200px]">
-                                        {stats.sparesDetails.slice(0, 3).map((s, sIdx) => (
-                                          <span key={sIdx} className="text-[8px] bg-slate-100 text-slate-600 px-1.5 py-0.5 rounded font-bold border border-slate-200">
-                                            {s.name}
+                                        {stats.sparesDetails.map((s, sIdx) => (
+                                          <span key={sIdx} className="text-[8px] bg-slate-100 text-slate-600 px-1.5 py-0.5 rounded font-bold border border-slate-200 whitespace-nowrap">
+                                            {s.name} ({s.qty})
                                           </span>
                                         ))}
-                                        {stats.sparesDetails.length > 3 && (
-                                          <span className="text-[8px] text-slate-600 font-bold">+{stats.sparesDetails.length - 3} more</span>
-                                        )}
                                       </div>
                                     )}
                                   </div>
