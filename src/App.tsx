@@ -487,7 +487,7 @@ export default function App() {
   useEffect(() => {
     const q = query(collection(db, 'users'));
     const unsubscribe = onSnapshot(q, (snapshot) => {
-      const users = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as UserDBType));
+      const users = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as any as UserDBType));
       setUsersList(users);
     });
     return () => unsubscribe();
@@ -645,10 +645,11 @@ export default function App() {
         }
       });
       
+      let freshBikes: any[] = [];
       if (results[0].ok) {
-        const data = await results[0].json();
-        setBikesList(data);
-        saveToStorage("bikes", data);
+        freshBikes = await results[0].json();
+        setBikesList(freshBikes);
+        saveToStorage("bikes", freshBikes);
       }
       let freshSpares: any[] = [];
       if (results[1].ok) {
@@ -659,18 +660,21 @@ export default function App() {
 
       if (results[2].ok) {
         const data = await results[2].json();
-        const mappedLogs = data.map((l: any) => ({
-          ...l,
-          bikeReg: l.bike?.regNo || `Bike #${l.bikeId}`,
-          spares: l.spares?.map((s: any) => {
-            let name = s.spareName;
-            if (!name || name === "undefined" || name === "null") {
-              const spareInfo = freshSpares.find((sp: any) => sp.id === s.spareId);
-              name = spareInfo?.name || `Spare ID ${s.spareId}`;
-            }
-            return { ...s, spareName: name };
-          })
-        }));
+        const mappedLogs = data.map((l: any) => {
+          const bikeInfo = l.bike || freshBikes.find((b: any) => b.id === l.bikeId);
+          return {
+            ...l,
+            bikeReg: bikeInfo?.regNo || `Bike #${l.bikeId}`,
+            spares: l.spares?.map((s: any) => {
+              let name = s.spareName;
+              if (!name || name === "undefined" || name === "null") {
+                const spareInfo = freshSpares.find((sp: any) => sp.id === s.spareId);
+                name = spareInfo?.name || `Spare ID ${s.spareId}`;
+              }
+              return { ...s, spareName: name };
+            })
+          };
+        });
         setLogsList(mappedLogs);
         saveToStorage("logs", mappedLogs);
       }
@@ -2465,8 +2469,8 @@ export default function App() {
                                     </span>
                                     {stats.sparesDetails && stats.sparesDetails.length > 0 && (
                                       <div className="flex flex-wrap gap-1 justify-center max-w-[200px]">
-                                        {stats.sparesDetails.map((s, sIdx) => (
-                                          <span key={sIdx} className="text-[8px] bg-slate-100 text-slate-600 px-1.5 py-0.5 rounded font-bold border border-slate-200 whitespace-nowrap">
+                                        {stats.sparesDetails.map((s) => (
+                                          <span key={s.name} className="text-[8px] bg-slate-100 text-slate-600 px-1.5 py-0.5 rounded font-bold border border-slate-200 whitespace-nowrap">
                                             {s.name} ({s.qty})
                                           </span>
                                         ))}
@@ -2606,8 +2610,8 @@ export default function App() {
                             </div>
                             {log.spares && log.spares.length > 0 && (
                               <div className="flex flex-wrap gap-1 items-center">
-                                {log.spares.map((s, sIdx) => (
-                                  <span key={sIdx} className="text-[8px] bg-emerald-500/10 text-emerald-500 border border-emerald-500/20 px-1.5 py-0.5 rounded font-black">
+                                {log.spares.map((s) => (
+                                  <span key={s.spareId} className="text-[8px] bg-emerald-500/10 text-emerald-500 border border-emerald-500/20 px-1.5 py-0.5 rounded font-black">
                                     {s.spareName} ({s.quantity})
                                   </span>
                                 ))}
@@ -2658,8 +2662,8 @@ export default function App() {
                             </div>
                             {log.spares && log.spares.length > 0 && (
                               <div className="flex flex-wrap gap-1 items-center">
-                                {log.spares.map((s, sIdx) => (
-                                  <span key={sIdx} className="text-[8px] bg-amber-500/10 text-amber-500 border border-amber-500/20 px-1.5 py-0.5 rounded font-black">
+                                {log.spares.map((s) => (
+                                  <span key={s.spareId} className="text-[8px] bg-amber-500/10 text-amber-500 border border-amber-500/20 px-1.5 py-0.5 rounded font-black">
                                     {s.spareName} ({s.quantity})
                                   </span>
                                 ))}
@@ -2900,7 +2904,7 @@ export default function App() {
                                 <div className="flex flex-wrap gap-1.5 max-w-xs">
                                   {log.spares && log.spares.length > 0 ? (
                                     log.spares.map(s => (
-                                      <span key={s.id} className="text-[10px] bg-indigo-50 text-indigo-600 px-2 py-0.5 rounded-md font-semibold">
+                                      <span key={s.spareId} className="text-[10px] bg-indigo-50 text-indigo-600 px-2 py-0.5 rounded-md font-semibold">
                                         {s.spareName} ({s.quantity})
                                       </span>
                                     ))
