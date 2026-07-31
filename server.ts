@@ -186,10 +186,27 @@ async function ensureDatabaseSchema() {
 }
 
 async function startServer() {
-  await ensureDatabaseSchema();
   const app = express();
   const PORT = parseInt(process.env.PORT || "3000", 10);
   const server = http.createServer(app);
+  
+  // Basic health check for load balancer (Must be before any blocking calls)
+  app.get("/api/health", (req, res) => {
+    res.json({ status: "ok", uptime: process.uptime() });
+  });
+
+  // Start listening immediately so health checks pass
+  server.listen(PORT, "0.0.0.0", () => {
+    console.log(`Server running on http://localhost:${PORT}`);
+    
+    // Perform database schema check in the background
+    ensureDatabaseSchema().then(() => {
+      console.log("Background database initialization complete.");
+    }).catch(err => {
+      console.error("Background database initialization failed:", err);
+    });
+  });
+
   const io = new Server(server, {
     cors: { origin: "*" }
   });
@@ -215,11 +232,6 @@ async function startServer() {
   });
 
   // --- API ROUTES ---
-
-  // Health check
-  app.get("/api/health", (req, res) => {
-    res.json({ status: "ok", useFirestore });
-  });
 
   // Custom Registration Route (using relational PostgreSQL storage)
   app.post("/api/auth/custom-register", async (req, res) => {
@@ -888,10 +900,6 @@ async function startServer() {
       res.sendFile(path.join(distPath, "index.html"));
     });
   }
-
-  server.listen(PORT, "0.0.0.0", () => {
-    console.log(`Server running on http://localhost:${PORT}`);
-  });
 }
 
 startServer();
