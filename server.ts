@@ -1,18 +1,34 @@
-import express from "express";
+import express, { Request, Response, NextFunction } from "express";
 import path from "path";
 import { createServer as createViteServer } from "vite";
 import * as dotenv from "dotenv";
 import crypto from "crypto";
 import http from "http";
 import { Server } from "socket.io";
+import helmet from "helmet";
+import { rateLimit } from 'express-rate-limit';
+
+const authLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 100, // Limit each IP to 100 requests per 15 mins
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: "Too many attempts, please try again after 15 minutes" }
+});
 
 // Load environment variables
 dotenv.config();
 
 const JWT_SECRET = process.env.JWT_SECRET || 'eff-fleet-maintenance-system-secret-2026';
 
+import bcrypt from "bcryptjs";
+
 function hashPassword(password: string) {
-  return crypto.createHmac("sha256", JWT_SECRET).update(password).digest("hex");
+  return bcrypt.hashSync(password, 10);
+}
+
+function verifyPassword(password: string, hash: string) {
+  return bcrypt.compareSync(password, hash);
 }
 
 function generateCustomToken(user: { uid: string; email: string; role: string; name?: string | null; phoneNumber?: string | null }) {
@@ -45,7 +61,20 @@ import {
 
 
 
-// Automatic self-healing database schema verification
+// RBAC Middlewares
+const requireAdmin = (req: AuthRequest, res: Response, next: NextFunction) => {
+  if (req.user?.role !== "admin") {
+    return res.status(403).json({ error: "Forbidden: Admin access required" });
+  }
+  next();
+};
+
+const requireUserOrAdmin = (req: AuthRequest, res: Response, next: NextFunction) => {
+  if (!req.user) {
+    return res.status(401).json({ error: "Unauthorized" });
+  }
+  next();
+};
 async function ensureDatabaseSchema() {
   if (useFirestore) {
     console.log("Using serverless Firebase Firestore fallback storage. Skipping PostgreSQL self-healing migrations.");
@@ -190,7 +219,14 @@ async function startServer() {
   const PORT = parseInt(process.env.PORT || "3000", 10);
   const server = http.createServer(app);
   
-  // Basic health check for load balancer (Must be before any blocking calls)
+  // Security headers
+  app.use(helmet({
+    contentSecurityPolicy: false, // Disabled for Vite development compatibility
+  }));
+
+  app.use("/api/auth", authLimiter);
+
+  // Basic health check
   app.get("/api/health", (req, res) => {
     res.json({ status: "ok", uptime: process.uptime() });
   });
@@ -328,7 +364,7 @@ async function startServer() {
       const passwordHash = hashPassword(password);
 
       // If passwordHash matches, log in
-      if (user.passwordHash && user.passwordHash === passwordHash) {
+      if (user.passwordHash && verifyPassword(password, user.passwordHash)) {
         const token = generateCustomToken(user);
         return res.json({ status: "success", user, token });
       }
@@ -391,7 +427,7 @@ async function startServer() {
     }
   });
 
-  app.post("/api/bikes", requireAuth, async (req, res) => {
+  app.post("/api/bikes", requireAuth, requireAdmin, async (req, res) => {
     try {
       const { regNo, province, district, model, officer, dateAdded } = req.body;
       if (!regNo || !province || !district || !model || !officer || !dateAdded) {
@@ -423,7 +459,7 @@ async function startServer() {
     }
   });
 
-  app.put("/api/bikes/:id", requireAuth, async (req, res) => {
+  app.put("/api/bikes/:id", requireAuth, requireAdmin, async (req, res) => {
     try {
       const bikeId = parseInt(req.params.id);
       const { regNo, province, district, model, officer, dateAdded } = req.body;
@@ -455,7 +491,7 @@ async function startServer() {
     }
   });
 
-  app.delete("/api/bikes/:id", requireAuth, async (req, res) => {
+  app.delete("/api/bikes/:id", requireAuth, requireAdmin, async (req, res) => {
     try {
       const bikeId = parseInt(req.params.id);
       await deleteBike(bikeId);
@@ -479,7 +515,7 @@ async function startServer() {
     }
   });
 
-  app.post("/api/spares", requireAuth, async (req: AuthRequest, res) => {
+  app.post("/api/spares", requireAuth, requireAdmin, async (req: AuthRequest, res) => {
     try {
       const { name, quantity, dateAdded } = req.body;
       const addedBy = req.user?.name || req.user?.email || "Admin";
@@ -511,7 +547,7 @@ async function startServer() {
     }
   });
 
-  app.put("/api/spares/:id", requireAuth, async (req: AuthRequest, res) => {
+  app.put("/api/spares/:id", requireAuth, requireAdmin, async (req: AuthRequest, res) => {
     try {
       const spareId = parseInt(req.params.id);
       const { name, quantity, dateAdded } = req.body;
@@ -541,7 +577,7 @@ async function startServer() {
     }
   });
 
-  app.delete("/api/spares/:id", requireAuth, async (req, res) => {
+  app.delete("/api/spares/:id", requireAuth, requireAdmin, async (req, res) => {
     try {
       const spareId = parseInt(req.params.id);
       await deleteSpare(spareId);
@@ -565,7 +601,7 @@ async function startServer() {
     }
   });
 
-  app.post("/api/logs", requireAuth, async (req, res) => {
+  app.post("/api/logs", requireAuth, requireAdmin, async (req, res) => {
     try {
       const {
         bikeId,
@@ -675,7 +711,7 @@ async function startServer() {
   });
 
   // --- USER MANAGEMENT API ROUTES ---
-  app.get("/api/users", requireAuth, async (req: AuthRequest, res) => {
+  app.get("/api/users", requireAuth, requireAdmin, async (req: AuthRequest, res) => {
     try {
       if (!req.user?.uid) return res.status(401).json({ error: "Unauthorized" });
       const dbUser = await getUserByUid(req.user.uid);
@@ -690,12 +726,8 @@ async function startServer() {
     }
   });
 
-  app.post("/api/users", requireAuth, async (req: AuthRequest, res) => {
+  app.post("/api/users", requireAuth, requireAdmin, async (req: AuthRequest, res) => {
     try {
-      const dbUser = await getUserByUid(req.user!.uid);
-      if (!dbUser || dbUser.role !== "admin") {
-        return res.status(403).json({ error: "Forbidden: Admins only" });
-      }
       const { email, name, role, phoneNumber } = req.body;
       if (!email || !role) {
         return res.status(400).json({ error: "Email and Role are required" });
@@ -725,12 +757,8 @@ async function startServer() {
     }
   });
 
-  app.put("/api/users/:id", requireAuth, async (req: AuthRequest, res) => {
+  app.put("/api/users/:id", requireAuth, requireAdmin, async (req: AuthRequest, res) => {
     try {
-      const dbUser = await getUserByUid(req.user!.uid);
-      if (!dbUser || dbUser.role !== "admin") {
-        return res.status(403).json({ error: "Forbidden: Admins only" });
-      }
       const userId = parseInt(req.params.id);
       const { name, role, email, phoneNumber } = req.body;
       
@@ -751,12 +779,9 @@ async function startServer() {
     }
   });
 
-  app.delete("/api/users/:id", requireAuth, async (req: AuthRequest, res) => {
+  app.delete("/api/users/:id", requireAuth, requireAdmin, async (req: AuthRequest, res) => {
     try {
       const dbUser = await getUserByUid(req.user!.uid);
-      if (!dbUser || dbUser.role !== "admin") {
-        return res.status(403).json({ error: "Forbidden: Admins only" });
-      }
       const userId = parseInt(req.params.id);
       
       if (userId === dbUser.id) {
@@ -828,14 +853,10 @@ async function startServer() {
     }
   });
 
-  app.put("/api/requests/:id", requireAuth, async (req: AuthRequest, res) => {
+  app.put("/api/requests/:id", requireAuth, requireAdmin, async (req: AuthRequest, res) => {
     try {
       const requestId = parseInt(req.params.id);
       const { status } = req.body;
-      const dbUser = await getUserByUid(req.user!.uid);
-      if (!dbUser || dbUser.role !== "admin") {
-        return res.status(403).json({ error: "Forbidden: Admins only" });
-      }
 
       const updatedRequest = await updateRequest(requestId, { status });
 

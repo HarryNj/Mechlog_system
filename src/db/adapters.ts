@@ -270,6 +270,7 @@ export async function createSpare(data: any) {
       id,
       name: data.name.trim(),
       quantity: Number(data.quantity),
+      unitPrice: Number(data.unitPrice || 0),
       dateAdded: data.dateAdded,
       addedBy: data.addedBy,
       createdAt: new Date()
@@ -289,6 +290,9 @@ export async function updateSpare(id: number, data: any) {
     const updateData = { ...data };
     if (updateData.quantity !== undefined) {
       updateData.quantity = Number(updateData.quantity);
+    }
+    if (updateData.unitPrice !== undefined) {
+      updateData.unitPrice = Number(updateData.unitPrice);
     }
     await docRef.update(updateData);
     const updated = await docRef.get();
@@ -367,6 +371,19 @@ export async function getLogById(id: number) {
 export async function createLog(logData: any, sparesUsedList: any[]) {
   if (useFirestore) {
     const id = await getNextFirestoreId("service_logs");
+    const enrichedSpares = [];
+    for (const item of sparesUsedList) {
+      const spare = await getSpareById(item.spareId);
+      enrichedSpares.push({
+        ...item,
+        priceAtTime: spare?.unitPrice || 0
+      });
+      if (spare) {
+        const newQty = Math.max(0, spare.quantity - item.quantity);
+        await updateSpare(spare.id, { quantity: newQty });
+      }
+    }
+
     const newLog = {
       id,
       bikeId: Number(logData.bikeId),
@@ -380,20 +397,10 @@ export async function createLog(logData: any, sparesUsedList: any[]) {
       workDone: logData.workDone || null,
       workPending: logData.workPending || null,
       status: logData.status,
-      spares: sparesUsedList,
+      spares: enrichedSpares,
       createdAt: new Date()
     };
     await adminDb.collection("service_logs").doc(String(id)).set(newLog);
-
-    // Deduct quantities of spares used from spares collection
-    for (const item of sparesUsedList) {
-      const spare = await getSpareById(item.spareId);
-      if (spare) {
-        const newQty = Math.max(0, spare.quantity - item.quantity);
-        await updateSpare(spare.id, { quantity: newQty });
-      }
-    }
-
     return newLog;
   }
 
@@ -415,11 +422,21 @@ export async function createLog(logData: any, sparesUsedList: any[]) {
 
     const populatedSpares = [];
     for (const sp of sparesUsedList) {
+      // Lookup current price if not provided
+      let currentPrice = sp.priceAtTime;
+      if (currentPrice === undefined) {
+        const [spare] = await tx.select({ unitPrice: sparesInventory.unitPrice })
+          .from(sparesInventory)
+          .where(eq(sparesInventory.id, sp.spareId));
+        currentPrice = spare?.unitPrice || 0;
+      }
+
       const [insertedSpareRelation] = await tx.insert(serviceLogSpares).values({
         serviceLogId: insertedLog.id,
         spareId: sp.spareId,
         spareName: sp.spareName,
         quantity: sp.quantity,
+        priceAtTime: currentPrice,
       }).returning();
 
       // Deduct quantity from inventory

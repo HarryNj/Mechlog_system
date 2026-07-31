@@ -42,6 +42,7 @@ export const sparesInventory = pgTable('spares_inventory', {
   id: serial('id').primaryKey(),
   name: text('name').notNull().unique(),
   quantity: integer('quantity').notNull(),
+  unitPrice: integer('unit_price').default(0).notNull(),
   dateAdded: text('date_added').notNull(), // YYYY-MM-DD
   addedBy: text('added_by').notNull(), // admin user who added it
   createdAt: timestamp('created_at').defaultNow(),
@@ -74,6 +75,7 @@ export const serviceLogSpares = pgTable('service_log_spares', {
     .references(() => sparesInventory.id, { onDelete: 'set null' }),
   spareName: text('spare_name').notNull(),
   quantity: integer('quantity').notNull(),
+  priceAtTime: integer('price_at_time').default(0).notNull(),
   createdAt: timestamp('created_at').defaultNow(),
 });
 

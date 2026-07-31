@@ -38,11 +38,12 @@
         "id": { "type": "integer" },
         "name": { "type": "string", "description": "Unique name of the spare part" },
         "quantity": { "type": "integer", "description": "Available stock quantity" },
+        "unitPrice": { "type": "integer", "description": "Price per unit in Kwacha" },
         "dateAdded": { "type": "string" },
         "addedBy": { "type": "string" },
         "createdAt": { "type": "string", "format": "date-time" }
       },
-      "required": ["name", "quantity", "dateAdded", "addedBy"]
+      "required": ["name", "quantity", "unitPrice", "dateAdded", "addedBy"]
     },
     "ServiceLog": {
       "title": "ServiceLog",
@@ -63,7 +64,16 @@
         "status": { "type": "string" },
         "sparesUsed": {
           "type": "array",
-          "description": "List of spares used in this specific maintenance service session"
+          "description": "List of spares used in this specific maintenance service session",
+          "items": {
+            "type": "object",
+            "properties": {
+              "spareId": { "type": "integer" },
+              "spareName": { "type": "string" },
+              "quantity": { "type": "integer" },
+              "priceAtTime": { "type": "integer" }
+            }
+          }
         },
         "createdAt": { "type": "string", "format": "date-time" }
       },

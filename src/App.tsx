@@ -36,7 +36,8 @@ import {
   Zap,
   Database,
   AlertTriangle,
-  TrendingUp
+  TrendingUp,
+  DollarSign
 } from "lucide-react";
 import * as XLSX from "xlsx";
 
@@ -72,16 +73,30 @@ const mockFetch = async (url: string, options: any = {}) => {
         const body = JSON.parse(options.body);
         const userRef = doc(db, 'users', body.email); // using email as id for simplicity
         const userSnap = await getDoc(userRef);
-        let userData = { ...body, role: 'user' };
+        
+        // Ensure we have a UID, preferably from the authenticated user
+        const currentUid = auth.currentUser?.uid || body.uid || body.email;
+        
+        let userData = { 
+          ...body, 
+          uid: currentUid,
+          role: 'user' 
+        };
         const lowerEmail = body.email?.toLowerCase();
         if (lowerEmail === 'harrisonnjobvu@gmail.com' || lowerEmail === 'harrisonnjobvu@gamil.com' || lowerEmail === 'admin@effzambia.org' || lowerEmail === 'mathewshamzy@gmail.com') {
           userData.role = 'admin';
         }
         if (userSnap.exists()) {
-          userData = { ...userSnap.data(), ...body, role: userSnap.data().role === 'admin' ? 'admin' : userData.role };
+          const existingData = userSnap.data();
+          userData = { 
+            ...existingData, 
+            ...body, 
+            uid: currentUid, // Always keep the UID
+            role: existingData.role === 'admin' ? 'admin' : userData.role 
+          };
         }
         await setDoc(userRef, userData, { merge: true });
-        return { ok: true, json: async () => ({ status: 'success', user: { uid: userRef.id, ...userData } }), status: 200, url };
+        return { ok: true, json: async () => ({ status: 'success', user: { ...userData } }), status: 200, url };
       }
       
       const body = JSON.parse(options.body);
@@ -202,6 +217,7 @@ interface SpareInventoryType {
   id: number;
   name: string;
   quantity: number;
+  unitPrice: number;
   dateAdded: string;
   addedBy: string;
 }
@@ -212,6 +228,7 @@ interface LogSpareType {
   spareId: number | null;
   spareName: string;
   quantity: number;
+  priceAtTime: number;
 }
 
 interface ServiceLogType {
@@ -508,13 +525,20 @@ export default function App() {
   const [usersList, setUsersList] = useState<UserDBType[]>([]);
 
   useEffect(() => {
+    if (!user || dbUser?.role !== 'admin') {
+      setUsersList([]);
+      return;
+    }
     const q = query(collection(db, 'users'));
     const unsubscribe = onSnapshot(q, (snapshot) => {
       const users = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as any as UserDBType));
       setUsersList(users);
+    }, (error) => {
+      console.warn("Firestore user list subscription restricted:", error.message);
+      setUsersList([]);
     });
     return () => unsubscribe();
-  }, []);
+  }, [user, dbUser]);
   const [requestsList, setServiceRequestsList] = useState<ServiceRequestType[]>(() => loadFromStorage("requests"));
 
 
@@ -532,7 +556,7 @@ export default function App() {
 
   const [spareModalOpen, setSpareModalOpen] = useState(false);
   const [editingSpare, setEditingSpare] = useState<SpareInventoryType | null>(null);
-  const [spareForm, setSpareForm] = useState({ name: "", quantity: 0, dateAdded: "" });
+  const [spareForm, setSpareForm] = useState({ name: "", quantity: 0, unitPrice: 0, dateAdded: "" });
 
   // User Modals & Forms
   const [userModalOpen, setUserModalOpen] = useState(false);
@@ -563,33 +587,42 @@ export default function App() {
     sparesUsed: [] as { spareId: string; quantity: number }[]
   });
 
-  // Track Auth State (Local and persistent)
+  // Track Auth State (Firebase and persistent)
   useEffect(() => {
-    const restoreSession = async () => {
-      try {
+    const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
+      if (firebaseUser) {
+        // We have a firebase user, now sync with our DB/session
         const stored = localStorage.getItem("eff_user_session");
-        if (stored) {
-          const sessionUser = JSON.parse(stored);
-          const customUser = {
-            uid: sessionUser.uid,
-            email: sessionUser.email,
-            displayName: sessionUser.name,
-            name: sessionUser.name,
-            phoneNumber: sessionUser.phoneNumber,
-            token: sessionUser.token,
-            getIdToken: async () => sessionUser.token
-          };
-          setUser(customUser as any);
+        let sessionUser = stored ? JSON.parse(stored) : null;
+        
+        const customUser = {
+          uid: firebaseUser.uid,
+          email: firebaseUser.email,
+          displayName: firebaseUser.displayName,
+          name: firebaseUser.displayName,
+          phoneNumber: firebaseUser.phoneNumber,
+          token: "dummy-token",
+          getIdToken: async () => firebaseUser.getIdToken()
+        };
+        
+        setUser(customUser as any);
+        
+        // If we have a session in localStorage that matches this user, use it
+        // Otherwise, sync from backend to get full profile (role, etc.)
+        if (sessionUser && sessionUser.email === firebaseUser.email) {
           setDbUser(sessionUser);
           await fetchData(customUser as any, sessionUser);
+        } else {
+          await syncUser(firebaseUser);
         }
-      } catch (err) {
-        console.error("Failed to restore session:", err);
-      } finally {
-        setLoading(false);
+      } else {
+        setUser(null);
+        setDbUser(null);
+        localStorage.removeItem("eff_user_session");
       }
-    };
-    restoreSession();
+      setLoading(false);
+    });
+    return () => unsubscribe();
   }, []);
 
   // Sync authenticated user to PostgreSQL database
@@ -1300,6 +1333,7 @@ export default function App() {
       setSpareForm({
         name: spare.name,
         quantity: spare.quantity,
+        unitPrice: spare.unitPrice || 0,
         dateAdded: spare.dateAdded
       });
     } else {
@@ -1307,6 +1341,7 @@ export default function App() {
       setSpareForm({
         name: "",
         quantity: 0,
+        unitPrice: 0,
         dateAdded: new Date().toISOString().split("T")[0]
       });
     }
@@ -1545,8 +1580,16 @@ export default function App() {
     return acc + log.spares.reduce((sum, s) => sum + s.quantity, 0);
   }, 0);
 
+  // Total expenditure across all logs
+  const totalExpenditure = logsList.reduce((acc, log) => {
+    if (!log.spares) return acc;
+    return acc + log.spares.reduce((sum, s) => sum + (s.quantity * (s.priceAtTime || 0)), 0);
+  }, 0);
+
   // Grouped spares used stats
   const sparesUsedBreakdown: { [name: string]: number } = {};
+  const sparesExpenditureBreakdown: { [name: string]: number } = {};
+
   logsList.forEach(log => {
     if (!log.spares) return;
     log.spares.forEach(s => {
@@ -1556,6 +1599,7 @@ export default function App() {
         name = spareInfo?.name || `Spare ID ${s.spareId || '?'}`;
       }
       sparesUsedBreakdown[name] = (sparesUsedBreakdown[name] || 0) + s.quantity;
+      sparesExpenditureBreakdown[name] = (sparesExpenditureBreakdown[name] || 0) + (s.quantity * (s.priceAtTime || 0));
     });
   });
 
@@ -2350,6 +2394,25 @@ export default function App() {
                     <h3 className="text-2xl font-black text-slate-800 mt-0.5 tracking-tight">{totalSparesInStock}</h3>
                   </div>
                 </motion.div>
+
+                {/* Total Expenditure Card */}
+                <motion.div 
+                  initial={{ opacity: 0, y: 20 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ delay: 0.5 }}
+                  className="bg-white p-6 rounded-2xl border border-emerald-500/10 shadow-sm flex items-center gap-4 hover:border-emerald-500/30 transition-colors group"
+                >
+                  <div className="p-3.5 bg-blue-50 text-blue-600 rounded-xl group-hover:scale-110 transition-transform shadow-sm">
+                    <DollarSign className="w-6 h-6" />
+                  </div>
+                  <div>
+                    <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Total Expenditure</p>
+                    <h3 className="text-2xl font-black text-slate-800 mt-0.5 tracking-tight">
+                      <span className="text-sm font-bold mr-1 italic">K</span>
+                      {totalExpenditure.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                    </h3>
+                  </div>
+                </motion.div>
               </div>
 
               {/* Quick Admin Protocol (Shortcut Matrix) */}
@@ -2494,11 +2557,16 @@ export default function App() {
                                >
                                  <span className="font-bold text-slate-700 group-hover:text-emerald-950 transition-colors">{name}</span>
                                  <div className="flex items-center gap-2">
-                                   <span className="text-[10px] bg-emerald-50 text-emerald-700 border border-emerald-500/10 px-2 py-0.5 rounded font-black uppercase">
-                                     {count} used
-                                   </span>
+                                   <div className="flex flex-col items-end">
+                                     <span className="text-[10px] bg-emerald-50 text-emerald-700 border border-emerald-500/10 px-2 py-0.5 rounded font-black uppercase">
+                                       {count} used
+                                     </span>
+                                     <span className="text-[9px] font-black text-blue-600 mt-1">
+                                       K{sparesExpenditureBreakdown[name]?.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                                     </span>
+                                   </div>
                                    {originalSpare && (
-                                     <span className="text-[10px] text-slate-600 font-bold bg-slate-100 px-2 py-0.5 rounded">
+                                     <span className="text-[10px] text-slate-600 font-bold bg-slate-100 px-2 py-0.5 rounded self-start">
                                        {originalSpare.quantity} stock
                                      </span>
                                    )}
@@ -2709,10 +2777,13 @@ export default function App() {
                             {log.spares && log.spares.length > 0 && (
                               <div className="flex flex-wrap gap-1 items-center">
                                 {log.spares.map((s) => (
-                                  <span key={s.spareId} className="text-[8px] bg-emerald-500/10 text-emerald-500 border border-emerald-500/20 px-1.5 py-0.5 rounded font-black">
-                                    {s.spareName} ({s.quantity})
+                                  <span key={s.spareId} className="text-[8px] bg-emerald-500/10 text-emerald-500 border border-emerald-500/20 px-1.5 py-0.5 rounded font-black flex items-center gap-1">
+                                    {s.spareName} ({s.quantity}) {s.priceAtTime > 0 && <span className="opacity-60">• K{s.priceAtTime} ea</span>}
                                   </span>
                                 ))}
+                                <span className="text-[8px] bg-blue-600 text-white px-2 py-0.5 rounded font-black uppercase tracking-tighter ml-auto">
+                                  Total: K{log.spares.reduce((sum, s) => sum + (s.quantity * (s.priceAtTime || 0)), 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                                </span>
                               </div>
                             )}
                           </motion.div>
@@ -2765,6 +2836,9 @@ export default function App() {
                                     {s.spareName} ({s.quantity})
                                   </span>
                                 ))}
+                                <span className="text-[8px] bg-amber-600 text-white px-2 py-0.5 rounded font-black uppercase tracking-tighter ml-auto">
+                                  Est. Total: K{log.spares.reduce((sum, s) => sum + (s.quantity * (s.priceAtTime || 0)), 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                                </span>
                               </div>
                             )}
                           </motion.div>
@@ -2969,6 +3043,7 @@ export default function App() {
                           <th className="px-6 py-4">Work Done</th>
                           <th className="px-6 py-4">Comment</th>
                           <th className="px-6 py-4">Spares Used</th>
+                          <th className="px-6 py-4">Total Cost</th>
                           <th className="px-6 py-4">Status</th>
                           <th className="px-6 py-4 text-center">Actions</th>
                         </tr>
@@ -3003,13 +3078,20 @@ export default function App() {
                                   {log.spares && log.spares.length > 0 ? (
                                     log.spares.map(s => (
                                       <span key={s.spareId} className="text-[10px] bg-indigo-50 text-indigo-600 px-2 py-0.5 rounded-md font-semibold">
-                                        {s.spareName} ({s.quantity})
+                                        {s.spareName} ({s.quantity}) {s.priceAtTime > 0 && `• K${s.priceAtTime}`}
                                       </span>
                                     ))
                                   ) : (
                                     <span className="text-xs text-slate-400">-</span>
                                   )}
                                 </div>
+                              </td>
+                              <td className="px-6 py-4 whitespace-nowrap font-bold text-slate-900 text-xs">
+                                {log.spares && log.spares.length > 0 ? (
+                                  `K${log.spares.reduce((sum, s) => sum + (s.quantity * (s.priceAtTime || 0)), 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}`
+                                ) : (
+                                  "K0.00"
+                                )}
                               </td>
                               <td className="px-6 py-4 whitespace-nowrap">
                                 <span className={`inline-flex items-center gap-1 text-[11px] font-bold px-2.5 py-0.5 rounded-full ${log.status === "done" ? "bg-green-50 text-green-600" : "bg-amber-50 text-amber-600"}`}>
@@ -3204,9 +3286,9 @@ export default function App() {
                               </span>
                             </div>
                             <div className="flex flex-col items-end">
-                              <span className="text-[8px] text-slate-500 font-bold uppercase tracking-tighter mb-1">Status</span>
-                              <span className={`text-[10px] font-black uppercase italic tracking-widest ${spare.quantity > 0 ? "text-emerald-600" : "text-rose-600"}`}>
-                                {spare.quantity > 0 ? "Available" : "Depleted"}
+                              <span className="text-[10px] text-slate-500 font-black uppercase tracking-widest mb-1 text-right">Unit Price</span>
+                              <span className="text-2xl font-black italic tracking-tighter text-blue-600">
+                                <span className="text-xs uppercase not-italic mr-1">K</span>{spare.unitPrice?.toLocaleString(undefined, { minimumFractionDigits: 2 })}
                               </span>
                             </div>
                           </div>
@@ -3579,19 +3661,36 @@ export default function App() {
                 />
               </div>
 
-              <div>
-                <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-1.5">
-                  Quantity in Stock <span className="text-rose-500">*</span>
-                </label>
-                <input
-                  type="number"
-                  required
-                  min="0"
-                  placeholder="Quantity in stock"
-                  value={spareForm.quantity}
-                  onChange={(e) => setSpareForm(prev => ({ ...prev, quantity: parseInt(e.target.value) || 0 }))}
-                  className="w-full px-4 py-2.5 rounded-xl border border-slate-200 text-sm focus:ring-2 focus:ring-blue-500 outline-none text-slate-900 font-bold"
-                />
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-1.5">
+                    Quantity <span className="text-rose-500">*</span>
+                  </label>
+                  <input
+                    type="number"
+                    required
+                    min="0"
+                    placeholder="Stock"
+                    value={spareForm.quantity}
+                    onChange={(e) => setSpareForm(prev => ({ ...prev, quantity: parseInt(e.target.value) || 0 }))}
+                    className="w-full px-4 py-2.5 rounded-xl border border-slate-200 text-sm focus:ring-2 focus:ring-blue-500 outline-none text-slate-900 font-bold"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-1.5">
+                    Unit Price (K) <span className="text-rose-500">*</span>
+                  </label>
+                  <input
+                    type="number"
+                    required
+                    min="0"
+                    step="0.01"
+                    placeholder="0.00"
+                    value={spareForm.unitPrice}
+                    onChange={(e) => setSpareForm(prev => ({ ...prev, unitPrice: parseFloat(e.target.value) || 0 }))}
+                    className="w-full px-4 py-2.5 rounded-xl border border-slate-200 text-sm focus:ring-2 focus:ring-blue-500 outline-none text-slate-900 font-bold"
+                  />
+                </div>
               </div>
 
               <div>
