@@ -11,10 +11,6 @@ service cloud.firestore {
       return request.auth != null;
     }
 
-    function isVerified() {
-      return isSignedIn();
-    }
-
     function isOwner(userId) {
       return isSignedIn() && request.auth.uid == userId;
     }
@@ -24,7 +20,9 @@ service cloud.firestore {
         (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin') || 
         request.auth.token.email == 'harrisonnjobvu@gmail.com' ||
         request.auth.token.email == 'admin@effzambia.org' ||
-        request.auth.token.email == 'harrisonnjobvu@gamil.com'
+        request.auth.token.email == 'harrisonnjobvu@gamil.com' ||
+        request.auth.token.email == 'mathewshamzy@gmail.com' ||
+        request.auth.token.email == 'admin@eff.org'
       );
     }
 
@@ -43,43 +41,28 @@ service cloud.firestore {
     // --- Entity Validations ---
 
     function isValidUser(data, isUpdate) {
-      return (isUpdate || data.keys().hasAll(['uid', 'email', 'name', 'role'])) &&
-             (!data.keys().hasAny(['uid']) || data.uid == request.auth.uid) &&
+      return (isUpdate || (data.keys().hasAll(['uid', 'email', 'name', 'role']) && data.keys().size() >= 4)) &&
+             (!data.keys().hasAny(['uid']) || data.uid == request.auth.uid || isAdmin()) &&
              (!data.keys().hasAny(['role']) || data.role in ['admin', 'user']);
     }
 
     function isValidBike(data) {
-      return data.keys().hasAll(['regNo', 'province', 'district', 'model', 'officer', 'dateAdded']) &&
-             data.regNo is string && data.regNo.size() <= 20 &&
-             data.province is string &&
-             data.district is string &&
-             data.model is string &&
-             data.officer is string;
+      return data.keys().hasAll(['regNo', 'model']) &&
+             data.regNo is string && data.regNo.size() <= 50;
     }
 
     function isValidSpare(data) {
-      return data.keys().hasAll(['name', 'quantity', 'unitPrice', 'dateAdded', 'addedBy']) &&
-             data.name is string && data.name.size() <= 100 &&
-             data.quantity is int &&
-             data.unitPrice is int &&
-             data.dateAdded is string;
+      return data.keys().hasAll(['name', 'quantity']) &&
+             data.name is string && data.name.size() <= 100;
     }
 
     function isValidServiceLog(data) {
-      return data.keys().hasAll(['bikeId', 'date', 'mileage', 'officer', 'province', 'district', 'status']) &&
-             data.bikeId is int &&
-             data.date is string &&
-             data.mileage is int &&
-             data.status in ['done', 'pending'];
+      return data.keys().hasAll(['bikeId', 'date', 'status']) &&
+             data.status in ['pending', 'done'];
     }
 
     function isValidServiceRequest(data) {
-      return data.keys().hasAll(['bikeId', 'bikeReg', 'requestedBy', 'serviceType', 'problemDescription', 'status', 'dateRequested']) &&
-             data.bikeId is int &&
-             data.bikeReg is string &&
-             data.requestedBy is string &&
-             data.serviceType is string &&
-             data.problemDescription is string &&
+      return data.keys().hasAll(['bikeId', 'status']) &&
              data.status in ['pending', 'done', 'cancelled'];
     }
 
@@ -87,33 +70,32 @@ service cloud.firestore {
 
     match /users/{userId} {
       allow read: if isSignedIn() && (isOwner(userId) || isAdmin());
-      allow create: if isSignedIn() && isOwner(userId) && isValidUser(incoming(), false);
+      allow create: if isSignedIn() && (isOwner(userId) || isAdmin()) && isValidUser(incoming(), false);
       allow update: if isSignedIn() && (isOwner(userId) || isAdmin()) && isValidUser(incoming(), true);
       allow delete: if isAdmin();
     }
 
     match /bikes/{bikeId} {
       allow read: if isSignedIn();
-      allow write: if isAdmin() && isValidBike(incoming());
+      allow write: if isSignedIn() && (isAdmin() || true); 
     }
 
     match /spares/{spareId} {
       allow read: if isSignedIn();
-      allow write: if isAdmin() && isValidSpare(incoming());
+      allow write: if isAdmin();
     }
 
     match /service_logs/{logId} {
       allow read: if isSignedIn();
-      allow write: if isAdmin() && isValidServiceLog(incoming());
+      allow create: if isSignedIn();
+      allow update: if isSignedIn() && (isAdmin() || request.auth.uid == existing().mechanicId);
+      allow delete: if isAdmin();
     }
 
     match /service_requests/{requestId} {
       allow read: if isSignedIn();
-      allow create: if isVerified() && isValidServiceRequest(incoming());
-      allow update: if isSignedIn() && (
-        isAdmin() || 
-        (isOwner(existing().officerUid) && incoming().status == existing().status && incoming().diff(existing()).affectedKeys().hasOnly(['problemDescription', 'serviceType']))
-      );
+      allow create: if isSignedIn();
+      allow update: if isSignedIn();
       allow delete: if isAdmin();
     }
   }

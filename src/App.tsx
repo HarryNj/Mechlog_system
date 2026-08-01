@@ -1,5 +1,7 @@
 import React, { useState, useEffect, useRef } from "react";
 import { motion, AnimatePresence } from "motion/react";
+import "react-phone-number-input/style.css";
+import PhoneInput from "react-phone-number-input";
 import { io } from "socket.io-client";
 import { 
   Plus, 
@@ -37,155 +39,50 @@ import {
   Database,
   AlertTriangle,
   TrendingUp,
-  DollarSign
+  DollarSign,
+  Tag
 } from "lucide-react";
 import * as XLSX from "xlsx";
 
-import { collection, doc, getDocs, getDoc, setDoc, deleteDoc, updateDoc, query, where, onSnapshot } from 'firebase/firestore';
-import { db } from './lib/firebase.ts';
+import { supabase } from './lib/supabase.ts';
+import { Session, User as SupabaseUser } from '@supabase/supabase-js';
 
-const mockFetch = async (url: string, options: any = {}) => {
-  const method = options.method || 'GET';
-  const path = url.split('?')[0].replace('/api/', '');
-  const segments = path.split('/');
-  const collectionName = segments[0];
-  const id = segments[1];
-  try {
-    if (method === 'GET') {
-      if (path === 'auth/me') {
-        const stored = localStorage.getItem("eff_user_session");
-        if (stored) {
-          return { ok: true, json: async () => ({ status: 'success', user: JSON.parse(stored) }), status: 200, url };
-        }
-        return { ok: false, status: 401, json: async () => ({ error: 'Not logged in' }), url };
-      }
-      if (id) {
-        const snap = await getDoc(doc(db, collectionName, id));
-        if (!snap.exists()) return { ok: false, status: 404, statusText: "Not found", json: async () => ({ error: "Not found" }), url };
-        return { ok: true, json: async () => ({ id: snap.id, ...snap.data() }), status: 200, url };
-      } else {
-        const snap = await getDocs(collection(db, collectionName));
-        const data = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-        return { ok: true, json: async () => data, status: 200, url };
-      }
-    } else if (method === 'POST') {
-      if (path === 'auth/sync') {
-        const body = JSON.parse(options.body);
-        const userRef = doc(db, 'users', body.email); // using email as id for simplicity
-        const userSnap = await getDoc(userRef);
-        
-        // Ensure we have a UID, preferably from the authenticated user
-        const currentUid = auth.currentUser?.uid || body.uid || body.email;
-        
-        let userData = { 
-          ...body, 
-          uid: currentUid,
-          role: 'user' 
-        };
-        const lowerEmail = body.email?.toLowerCase();
-        if (lowerEmail === 'harrisonnjobvu@gmail.com' || lowerEmail === 'harrisonnjobvu@gamil.com' || lowerEmail === 'admin@effzambia.org' || lowerEmail === 'mathewshamzy@gmail.com') {
-          userData.role = 'admin';
-        }
-        if (userSnap.exists()) {
-          const existingData = userSnap.data();
-          userData = { 
-            ...existingData, 
-            ...body, 
-            uid: currentUid, // Always keep the UID
-            role: existingData.role === 'admin' ? 'admin' : userData.role 
-          };
-        }
-        await setDoc(userRef, userData, { merge: true });
-        return { ok: true, json: async () => ({ status: 'success', user: { ...userData } }), status: 200, url };
-      }
-      
-      const body = JSON.parse(options.body);
-      
-      // Ensure ID field exists for query-based operations
-      if (!body.id) {
-        const snap = await getDocs(collection(db, collectionName));
-        const ids = snap.docs.map(d => d.data().id).filter(id => typeof id === 'number');
-        const maxId = ids.length > 0 ? Math.max(...ids) : 0;
-        body.id = maxId + 1;
-      }
+enum OperationType {
+  CREATE = 'create',
+  UPDATE = 'update',
+  DELETE = 'delete',
+  LIST = 'list',
+  GET = 'get',
+  WRITE = 'write',
+}
 
-      // Auto generate Firestore ID
-      const newRef = doc(collection(db, collectionName));
-      await setDoc(newRef, body);
-      return { ok: true, json: async () => ({ id: newRef.id, ...body }), status: 200, url };
-    } else if (method === 'PUT') {
-      const body = JSON.parse(options.body);
-      console.log(`PUT request: collection=${collectionName}, id=${id}, body=`, body);
-      let docRef;
-      
-      // Try direct document ID first
-      const directRef = doc(db, collectionName, id);
-      const directSnap = await getDoc(directRef);
-      
-      if (directSnap.exists()) {
-        docRef = directRef;
-      } else {
-        // Fallback to searching by 'id' field
-        const isNumeric = /^\d+$/.test(id);
-        const q = query(collection(db, collectionName), where("id", "==", isNumeric ? parseInt(id) : id));
-        const snap = await getDocs(q);
-        
-        if (snap.empty) {
-          // Final attempt: search by string id even if it looks numeric
-          const snap2 = await getDocs(query(collection(db, collectionName), where("id", "==", id)));
-          if (snap2.empty) return { ok: false, status: 404, statusText: "Not found", json: async () => ({ error: "Not found" }), url };
-          docRef = snap2.docs[0].ref;
-        } else {
-          docRef = snap.docs[0].ref;
-        }
-      }
-      
-      await updateDoc(docRef, body);
-      return { ok: true, json: async () => ({ id, ...body }), status: 200, url };
-    } else if (method === 'DELETE') {
-      console.log(`DELETE request: collection=${collectionName}, id=${id}`);
-      let docRef;
-      
-      // Try direct document ID first
-      const directRef = doc(db, collectionName, id);
-      const directSnap = await getDoc(directRef);
-      
-      if (directSnap.exists()) {
-        docRef = directRef;
-      } else {
-        const isNumeric = /^\d+$/.test(id);
-        const q = query(collection(db, collectionName), where("id", "==", isNumeric ? parseInt(id) : id));
-        const snap = await getDocs(q);
-        
-        if (snap.empty) {
-          const snap2 = await getDocs(query(collection(db, collectionName), where("id", "==", id)));
-          if (snap2.empty) return { ok: false, status: 404, statusText: "Not found", json: async () => ({ error: "Not found" }), url };
-          docRef = snap2.docs[0].ref;
-        } else {
-          docRef = snap.docs[0].ref;
-        }
-      }
-      
-      await deleteDoc(docRef);
-      return { ok: true, json: async () => ({ status: 'success' }), status: 200, url };
-    }
-  } catch (err: any) {
-    console.error('Mock fetch error:', err);
-    return { ok: false, status: 500, statusText: err.message, json: async () => ({ error: err.message }), url };
+interface FirestoreErrorInfo {
+  error: string;
+  operationType: OperationType;
+  path: string | null;
+  authInfo: {
+    userId?: string | null;
+    email?: string | null;
+    emailVerified?: boolean | null;
   }
-};
+}
 
-import { auth, googleAuthProvider } from "./lib/firebase.ts";
-import { 
-  signOut, 
-  onAuthStateChanged, 
-  User as FirebaseUser,
-  createUserWithEmailAndPassword,
-  signInWithEmailAndPassword,
-  updateProfile,
-  sendPasswordResetEmail,
-  signInWithPopup
-} from "firebase/auth";
+function handleFirestoreError(error: unknown, operationType: OperationType, path: string | null) {
+  const errInfo: FirestoreErrorInfo = {
+    error: error instanceof Error ? error.message : String(error),
+    authInfo: {
+      userId: user?.uid,
+      email: user?.email,
+      emailVerified: user?.emailVerified,
+    },
+    operationType,
+    path
+  }
+  console.error('Firestore Error: ', JSON.stringify(errInfo));
+  throw new Error(JSON.stringify(errInfo));
+}
+
+
 // @ts-ignore
 import effLogo from "./assets/images/eff_logo_1784229618019.jpg";
 
@@ -375,35 +272,18 @@ function AgreementModal({ isOpen, onClose }: { isOpen: boolean; onClose: () => v
   );
 }
 
-const COUNTRIES = [
-  { name: "Zambia", code: "+260", flag: "🇿🇲" },
-  { name: "South Africa", code: "+27", flag: "🇿🇦" },
-  { name: "Zimbabwe", code: "+263", flag: "🇿🇼" },
-  { name: "Malawi", code: "+265", flag: "🇲🇼" },
-  { name: "Mozambique", code: "+258", flag: "🇲🇿" },
-  { name: "Tanzania", code: "+255", flag: "🇹🇿" },
-  { name: "Angola", code: "+244", flag: "🇦🇴" },
-  { name: "DR Congo", code: "+243", flag: "🇨🇩" },
-  { name: "Namibia", code: "+264", flag: "🇳🇦" },
-  { name: "Botswana", code: "+267", flag: "🇧🇼" },
-  { name: "Kenya", code: "+254", flag: "🇰🇪" },
-  { name: "Rwanda", code: "+250", flag: "🇷🇼" },
-  { name: "United Kingdom", code: "+44", flag: "🇬🇧" },
-  { name: "United States", code: "+1", flag: "🇺🇸" },
-];
+
 
 const isIframe = typeof window !== "undefined" && window.self !== window.top;
 
 export default function App() {
-  const [user, setUser] = useState<FirebaseUser | null>(null);
+  const [user, setUser] = useState<SupabaseUser | null>(null);
   const [dbUser, setDbUser] = useState<UserDBType | null>(null);
   const [authMode, setAuthMode] = useState<"signin" | "register" | "forgot">("signin");
   const [authEmail, setAuthEmail] = useState("");
   const [authPassword, setAuthPassword] = useState("");
   const [authName, setAuthName] = useState("");
   const [authPhone, setAuthPhone] = useState("");
-  const [selectedCountryCode, setSelectedCountryCode] = useState("+260");
-  const [localPhoneInput, setLocalPhoneInput] = useState("");
   const [authError, setAuthError] = useState("");
   const [authSuccess, setAuthSuccess] = useState("");
   const [authLoading, setAuthLoading] = useState(false);
@@ -424,7 +304,7 @@ export default function App() {
   useEffect(() => {
     const fetchDbStatus = async () => {
       try {
-        const res = await mockFetch("/api/health");
+        const res = await fetch("/api/health");
         const data = await res.json();
         if (data.status === "ok") {
           setDbLayer(data.useFirestore ? "firestore" : "sql");
@@ -458,7 +338,7 @@ export default function App() {
     let syncedCount = 0;
     for (const req of queue) {
       try {
-        const res = await mockFetch(req.url, req.options);
+        const res = await fetch(req.url, req.options);
         if (res.ok) {
           syncedCount++;
         } else {
@@ -481,7 +361,7 @@ export default function App() {
   const offlineFetch = async (url: string, options: any) => {
     if (navigator.onLine) {
       try {
-        const res = await mockFetch(url, options);
+        const res = await fetch(url, options);
         if (!res.ok && res.status >= 500) {
           throw new Error("Server Error");
         }
@@ -525,19 +405,97 @@ export default function App() {
   const [usersList, setUsersList] = useState<UserDBType[]>([]);
 
   useEffect(() => {
+    if (!user) return;
+    try {
+      const q = query(collection(db, 'bikes'));
+      const unsubscribe = onSnapshot(q, (snapshot) => {
+        const bikes = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as any as BikeType));
+        setBikesList(bikes);
+        saveToStorage("bikes", bikes);
+      }, (error) => {
+        handleFirestoreError(error, OperationType.LIST, 'bikes');
+      });
+      return () => subscription.unsubscribe();
+    } catch (e) {
+      handleFirestoreError(e, OperationType.GET, 'bikes');
+    }
+  }, [user]);
+
+  useEffect(() => {
+    if (!user) return;
+    try {
+      const q = query(collection(db, 'service_logs'));
+      const unsubscribe = onSnapshot(q, (snapshot) => {
+        const logs = snapshot.docs.map(doc => {
+          const data = doc.data();
+          return {
+            id: doc.id,
+            ...data,
+            date: data.date?.toDate ? data.date.toDate().toISOString().split('T')[0] : data.date
+          } as any as ServiceLogType;
+        });
+        setLogsList(logs);
+        saveToStorage("logs", logs);
+      }, (error) => {
+        handleFirestoreError(error, OperationType.LIST, 'service_logs');
+      });
+      return () => subscription.unsubscribe();
+    } catch (e) {
+      handleFirestoreError(e, OperationType.GET, 'service_logs');
+    }
+  }, [user]);
+
+  useEffect(() => {
+    if (!user) return;
+    try {
+      const q = query(collection(db, 'service_requests'));
+      const unsubscribe = onSnapshot(q, (snapshot) => {
+        const requests = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as any as ServiceRequestType));
+        setServiceRequestsList(requests);
+        saveToStorage("requests", requests);
+      }, (error) => {
+        handleFirestoreError(error, OperationType.LIST, 'service_requests');
+      });
+      return () => subscription.unsubscribe();
+    } catch (e) {
+      handleFirestoreError(e, OperationType.GET, 'service_requests');
+    }
+  }, [user]);
+
+  useEffect(() => {
+    if (!user) return;
+    try {
+      const q = query(collection(db, 'spares'));
+      const unsubscribe = onSnapshot(q, (snapshot) => {
+        const spares = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as any as SpareInventoryType));
+        setSparesList(spares);
+        saveToStorage("spares", spares);
+      }, (error) => {
+        handleFirestoreError(error, OperationType.LIST, 'spares');
+      });
+      return () => subscription.unsubscribe();
+    } catch (e) {
+      handleFirestoreError(e, OperationType.GET, 'spares');
+    }
+  }, [user]);
+
+  useEffect(() => {
     if (!user || dbUser?.role !== 'admin') {
       setUsersList([]);
       return;
     }
-    const q = query(collection(db, 'users'));
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      const users = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as any as UserDBType));
-      setUsersList(users);
-    }, (error) => {
-      console.warn("Firestore user list subscription restricted:", error.message);
-      setUsersList([]);
-    });
-    return () => unsubscribe();
+    try {
+      const q = query(collection(db, 'users'));
+      const unsubscribe = onSnapshot(q, (snapshot) => {
+        const users = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as any as UserDBType));
+        setUsersList(users);
+      }, (error) => {
+        handleFirestoreError(error, OperationType.LIST, 'users');
+      });
+      return () => subscription.unsubscribe();
+    } catch (e) {
+      handleFirestoreError(e, OperationType.GET, 'users');
+    }
   }, [user, dbUser]);
   const [requestsList, setServiceRequestsList] = useState<ServiceRequestType[]>(() => loadFromStorage("requests"));
 
@@ -589,20 +547,21 @@ export default function App() {
 
   // Track Auth State (Firebase and persistent)
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
+      const firebaseUser = session?.user;
       if (firebaseUser) {
         // We have a firebase user, now sync with our DB/session
         const stored = localStorage.getItem("eff_user_session");
         let sessionUser = stored ? JSON.parse(stored) : null;
         
         const customUser = {
-          uid: firebaseUser.uid,
+          uid: firebaseUser.id,
           email: firebaseUser.email,
-          displayName: firebaseUser.displayName,
-          name: firebaseUser.displayName,
-          phoneNumber: firebaseUser.phoneNumber,
+          displayName: firebaseUser.user_metadata?.full_name,
+          name: firebaseUser.user_metadata?.full_name,
+          phoneNumber: firebaseUser.phone,
           token: "dummy-token",
-          getIdToken: async () => firebaseUser.getIdToken()
+          getIdToken: async () => session?.access_token || ""
         };
         
         setUser(customUser as any);
@@ -622,20 +581,21 @@ export default function App() {
       }
       setLoading(false);
     });
-    return () => unsubscribe();
+    return () => subscription.unsubscribe();
   }, []);
 
   // Sync authenticated user to PostgreSQL database
-  const syncUser = async (currentUser: FirebaseUser, overrideName?: string, overridePhone?: string) => {
+  const syncUser = async (currentUser: SupabaseUser, overrideName?: string, overridePhone?: string) => {
     try {
       const token = "dummy-token";
-      const res = await mockFetch("/api/auth/sync", {
+      const res = await fetch("/api/auth/sync", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
           "Authorization": `Bearer ${token}`
         },
         body: JSON.stringify({
+          uid: currentUser.id,
           name: overrideName || authName || undefined,
           phoneNumber: overridePhone || authPhone || undefined,
           email: currentUser.email
@@ -646,14 +606,14 @@ export default function App() {
         if (data.status === "success" && data.user) {
           setDbUser(data.user);
           saveToStorage("dbUser", data.user);
-          await fetchData(currentUser, data.user);
+          await fetchData(currentUser as any, data.user);
           return;
         }
       }
-      await fetchData(currentUser, null);
+      await fetchData(currentUser as any, null);
     } catch (err) {
       console.error("Error syncing user with DB:", err);
-      await fetchData(currentUser, null);
+      await fetchData(currentUser as any, null);
     }
   };
 
@@ -677,7 +637,7 @@ export default function App() {
       // Refresh user role
       let userRes;
       try {
-        userRes = await mockFetch("/api/auth/me", { headers });
+        userRes = await fetch("/api/auth/me", { headers });
       } catch (e) {
         userRes = { ok: false };
       }
@@ -699,18 +659,18 @@ export default function App() {
       }
 
       const lowerEmail = currentUser.email?.toLowerCase() || "";
-      const isAdminEmail = lowerEmail === "harrisonnjobvu@gmail.com" || lowerEmail === "harrisonnjobvu@gamil.com" || lowerEmail === "admin@effzambia.org" || lowerEmail === "admin@eff.org";
+      const isAdminEmail = lowerEmail === "harrisonnjobvu@gmail.com" || lowerEmail === "harrisonnjobvu@gamil.com" || lowerEmail === "admin@effzambia.org" || lowerEmail === "admin@eff.org" || lowerEmail === "mathewshamzy@gmail.com";
       const isAdminUser = finalDbUser?.role === "admin" || isAdminEmail;
 
       const fetchPromises: Promise<any>[] = [
-        mockFetch("/api/bikes", { headers }).catch(e => ({ ok: false })),
-        mockFetch("/api/spares", { headers }).catch(e => ({ ok: false })),
-        mockFetch("/api/logs", { headers }).catch(e => ({ ok: false })),
-        mockFetch("/api/requests", { headers }).catch(e => ({ ok: false }))
+        fetch("/api/bikes", { headers }).catch(e => ({ ok: false })),
+        fetch("/api/spares", { headers }).catch(e => ({ ok: false })),
+        fetch("/api/logs", { headers }).catch(e => ({ ok: false })),
+        fetch("/api/requests", { headers }).catch(e => ({ ok: false }))
       ];
 
       if (isAdminUser) {
-        fetchPromises.push(mockFetch("/api/users", { headers }).catch(e => ({ ok: false })));
+        fetchPromises.push(fetch("/api/users", { headers }).catch(e => ({ ok: false })));
       }
 
       const results = await Promise.all(fetchPromises);
@@ -860,10 +820,12 @@ export default function App() {
     setAuthError("");
     setAuthSuccess("");
     try {
-      const userCredential = await signInWithEmailAndPassword(auth, authEmail, authPassword);
+      const { data: supaData, error } = await supabase.auth.signInWithPassword({ email: authEmail, password: authPassword });
+      if (error) throw error;
+      const userCredential = { user: supaData.user };
       const currentUser = userCredential.user;
 
-      const res = await mockFetch("/api/auth/sync", {
+      const res = await fetch("/api/auth/sync", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ email: currentUser.email })
@@ -874,11 +836,11 @@ export default function App() {
       }
       
       const sessionUser = {
-        uid: data.user.uid,
-        email: data.user.email,
-        name: data.user.name,
-        phoneNumber: data.user.phoneNumber,
-        role: data.user.role,
+        uid: data.user?.uid || data.user?.id || supaData.user?.id,
+        email: data.user?.email || supaData.user?.email,
+        name: data.user?.name || supaData.user?.user_metadata?.full_name,
+        phoneNumber: data.user?.phoneNumber || data.user?.phone || supaData.user?.phone,
+        role: data.user?.role || "user",
         token: "dummy-token"
       };
 
@@ -918,7 +880,8 @@ export default function App() {
     setAuthError("");
     setAuthSuccess("");
     try {
-      await sendPasswordResetEmail(auth, authEmail);
+      const { error } = await supabase.auth.resetPasswordForEmail(authEmail);
+      if (error) throw error;
       setAuthSuccess(`Password reset email has been sent successfully to ${authEmail}! Please check your inbox and follow the instructions.`);
     } catch (err: any) {
       console.warn("Firebase password reset warning:", err);
@@ -934,81 +897,13 @@ export default function App() {
     setAuthError("");
     setAuthSuccess("");
     try {
-      const result = await signInWithPopup(auth, googleAuthProvider);
-      const currentUser = result.user;
-      const token = "dummy-token";
-      
-      let res;
-      try {
-        res = await mockFetch("/api/auth/sync", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "Authorization": `Bearer ${token}`
-          },
-          body: JSON.stringify({
-            name: currentUser.displayName,
-            email: currentUser.email,
-            phoneNumber: currentUser.phoneNumber || ""
-          })
-        });
-      } catch (err) {
-        console.warn("Could not reach backend for sync:", err);
-      }
-      
-      let dataUser = null;
-      
-      if (!res || !res.ok) {
-        console.warn("Failed to sync Google account with fleet database. Falling back to Firebase info.");
-        dataUser = {
-          uid: currentUser.uid,
-          email: currentUser.email,
-          role: "user",
-          name: currentUser.displayName || "",
-          phoneNumber: currentUser.phoneNumber || ""
-        };
-      } else {
-        const data = await res.json();
-        if (data.status === "success" && data.user) {
-          dataUser = data.user;
-        } else {
-          throw new Error(data.error || "Failed to sign in with Google.");
-        }
-      }
-      
-      if (dataUser) {
-        const sessionUser = {
-          uid: dataUser.uid,
-          email: dataUser.email,
-          name: dataUser.name,
-          phoneNumber: dataUser.phoneNumber,
-          role: dataUser.role,
-          token: token
-        };
-        
-        localStorage.setItem("eff_user_session", JSON.stringify(sessionUser));
-        
-        const customUser = {
-          uid: sessionUser.uid,
-          email: sessionUser.email,
-          displayName: sessionUser.name,
-          name: sessionUser.name,
-          phoneNumber: sessionUser.phoneNumber,
-          token: sessionUser.token,
-          getIdToken: async () => sessionUser.token
-        };
-        
-        setUser(customUser as any);
-        setDbUser(sessionUser);
-        setAuthSuccess("Google Sign-In successful!");
-        await fetchData(customUser as any, sessionUser);
-      } else {
-        throw new Error("Invalid response from sync endpoint.");
-      }
+      const { error } = await supabase.auth.signInWithOAuth({ provider: 'google' });
+      if (error) throw error;
+      // Note: for OAuth, Supabase redirects the browser. 
+      // The session will be captured by onAuthStateChange when returning.
     } catch (err: any) {
-      console.error("Google Sign-In failed:", err);
-      setAuthError(err.message || "Google Authentication failed. Please try again.");
-    } finally {
+      console.error("Google Sign-In error:", err);
+      setAuthError(err.message || "Google Sign-In failed.");
       setAuthLoading(false);
     }
   };
@@ -1016,8 +911,8 @@ export default function App() {
   // Handle Email/Password/Name/Phone Register (Custom Secure Relational DB Registration)
   const handleEmailRegister = async (e: React.FormEvent) => {
     e.preventDefault();
-    const finalPhone = selectedCountryCode + localPhoneInput.trim().replace(/\D/g, "");
-    if (!authEmail || !authPassword || !authName || !localPhoneInput) {
+    const finalPhone = authPhone;
+    if (!authEmail || !authPassword || !authName || !authPhone) {
       setAuthError("All fields (Name, Email, Phone Number, Password) are required");
       return;
     }
@@ -1029,12 +924,14 @@ export default function App() {
     setAuthError("");
     setAuthSuccess("");
     try {
-      const userCredential = await createUserWithEmailAndPassword(auth, authEmail, authPassword);
+      const { data: supaData, error } = await supabase.auth.signUp({ email: authEmail, password: authPassword, options: { data: { full_name: authName } } });
+      if (error) throw error;
+      const userCredential = { user: supaData.user };
       const currentUser = userCredential.user;
-      await updateProfile(currentUser, { displayName: authName });
+      // Profile updated via signUp options
       const token = "dummy-token";
 
-      const res = await mockFetch("/api/auth/sync", {
+      const res = await fetch("/api/auth/sync", {
         method: "POST",
         headers: { "Content-Type": "application/json", "Authorization": `Bearer ${token}` },
         body: JSON.stringify({ email: currentUser.email, name: authName, phoneNumber: finalPhone })
@@ -1045,11 +942,11 @@ export default function App() {
       }
 
       const sessionUser = {
-        uid: data.user.uid,
-        email: data.user.email,
-        name: data.user.name,
-        phoneNumber: data.user.phoneNumber,
-        role: data.user.role,
+        uid: data.user?.uid || data.user?.id || supaData.user?.id,
+        email: data.user?.email || supaData.user?.email,
+        name: data.user?.name || supaData.user?.user_metadata?.full_name,
+        phoneNumber: data.user?.phoneNumber || data.user?.phone || supaData.user?.phone,
+        role: data.user?.role || "user",
         token: token
       };
 
@@ -1080,6 +977,7 @@ export default function App() {
 
   const handleSignOut = async () => {
     try {
+      await supabase.auth.signOut();
       localStorage.removeItem("eff_user_session");
       window.location.reload();
     } catch (err) {
@@ -1171,6 +1069,8 @@ export default function App() {
     if (!user) return;
 
     const token = "dummy-token";
+    const matchingBike = bikesList.find(b => String(b.id) === String(requestForm.bikeId));
+    
     try {
       const res = await offlineFetch("/api/requests", {
         method: "POST",
@@ -1180,6 +1080,10 @@ export default function App() {
         },
         body: JSON.stringify({
           ...requestForm,
+          bikeId: parseInt(requestForm.bikeId),
+          bikeReg: matchingBike?.regNo || "Unknown",
+          requestedBy: user.displayName || user.email,
+          status: "pending",
           dateRequested: new Date().toISOString().split("T")[0]
         })
       });
@@ -1352,6 +1256,16 @@ export default function App() {
     e.preventDefault();
     if (!user) return;
 
+    // Check for duplicate name if creating new
+    if (!editingSpare) {
+      const isDuplicate = sparesList.some(s => s.name.trim().toLowerCase() === spareForm.name.trim().toLowerCase());
+      if (isDuplicate) {
+        if (!confirm(`A spare part named "${spareForm.name}" already exists in inventory. Do you want to continue creating a new entry with the same name?`)) {
+          return;
+        }
+      }
+    }
+
     const token = "dummy-token";
     const url = editingSpare ? `/api/spares/${editingSpare.id}` : "/api/spares";
     const method = editingSpare ? "PUT" : "POST";
@@ -1362,7 +1276,10 @@ export default function App() {
           "Content-Type": "application/json",
           "Authorization": `Bearer ${token}`
         },
-        body: JSON.stringify(spareForm)
+        body: JSON.stringify({
+          ...spareForm,
+          addedBy: user.displayName || user.email
+        })
       });
 
       if (!res.ok) {
@@ -1489,7 +1406,8 @@ export default function App() {
             return { 
               spareId: parseInt(s.spareId), 
               spareName: spareInfo?.name || `Spare ID ${s.spareId}`,
-              quantity: s.quantity 
+              quantity: s.quantity,
+              priceAtTime: spareInfo?.unitPrice || 0
             };
           })
         })
@@ -1904,37 +1822,15 @@ export default function App() {
                     
                     <div className="space-y-1">
                       <label className="text-[10px] text-slate-400 font-bold uppercase tracking-wider pl-1">International Phone Number</label>
-                      <div className="flex gap-2">
-                        <div className="relative w-1/3">
-                          <select
-                            value={selectedCountryCode}
-                            onChange={(e) => setSelectedCountryCode(e.target.value)}
-                            className="block w-full px-3 py-3.5 bg-slate-50/60 border border-slate-200 focus:border-emerald-500 rounded-2xl text-xs font-bold text-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 transition-all appearance-none cursor-pointer"
-                          >
-                            {COUNTRIES.map((c) => (
-                              <option key={c.code} value={c.code}>
-                                {c.flag} {c.code}
-                              </option>
-                            ))}
-                          </select>
-                          <div className="absolute inset-y-0 right-3 flex items-center pointer-events-none text-slate-400 text-[10px]">
-                            ▼
-                          </div>
-                        </div>
-                        
-                        <div className="relative flex-1 group">
-                          <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none">
-                            <Phone className="h-4 w-4 text-slate-400 group-focus-within:text-emerald-600 transition-colors" />
-                          </div>
-                          <input
-                            type="tel"
-                            required
-                            placeholder="Phone Number"
-                            value={localPhoneInput}
-                            onChange={(e) => setLocalPhoneInput(e.target.value)}
-                            className="block w-full pl-11 pr-4 py-3.5 bg-slate-50/60 border border-slate-200 focus:border-emerald-500 rounded-2xl text-xs font-semibold text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 transition-all tracking-widest"
-                          />
-                        </div>
+                      <div className="relative group">
+                        <PhoneInput
+                          international
+                          defaultCountry="ZM"
+                          value={authPhone}
+                          onChange={(v) => setAuthPhone(v as string || "")}
+                          className="block w-full px-4 py-3.5 bg-slate-50/60 border border-slate-200 focus-within:border-emerald-500 rounded-2xl text-xs font-semibold text-slate-800 focus-within:ring-2 focus-within:ring-emerald-500/20 transition-all tracking-widest [&>input]:bg-transparent [&>input]:border-none [&>input]:outline-none [&>input]:w-full"
+                          style={{ '--PhoneInputCountryFlag-height': '20px', '--PhoneInputCountrySelectArrow-color': '#94a3b8' } as any}
+                        />
                       </div>
                     </div>
                   </div>
@@ -2955,7 +2851,10 @@ export default function App() {
                       className="bg-slate-50/50 p-4 rounded-xl border border-slate-100 hover:border-emerald-500/20 hover:bg-emerald-50/30 transition-all group"
                     >
                       <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1 group-hover:text-emerald-600 transition-colors">Category</p>
-                      <h4 className="text-sm font-black text-slate-800 mb-3 truncate" title={spare.name}>{spare.name}</h4>
+                      <h4 className="text-sm font-black text-slate-800 mb-1 truncate" title={spare.name}>{spare.name}</h4>
+                      <p className="text-[9px] font-bold text-blue-600 mb-3 tracking-wider italic flex items-center gap-1">
+                        <Tag className="w-2.5 h-2.5" /> K{spare.unitPrice?.toLocaleString(undefined, { minimumFractionDigits: 2 })} / unit
+                      </p>
                       <div className="flex justify-between items-end">
                         <span className="text-[10px] text-slate-500 font-bold uppercase">In Stock</span>
                         <span className={`text-lg font-black tracking-tighter ${spare.quantity > 5 ? "text-emerald-600" : spare.quantity > 0 ? "text-amber-500" : "text-rose-500"}`}>
@@ -3278,17 +3177,27 @@ export default function App() {
                             <p className="text-[9px] text-slate-500 font-bold uppercase tracking-[0.2em]">Part ID: SPC-{spare.id.toString().padStart(4, "0")}</p>
                           </div>
                           
-                          <div className={`p-5 rounded-2xl border flex justify-between items-center transition-all ${isLow ? "bg-rose-50 border-rose-100" : "bg-slate-50 border-slate-200"}`}>
-                            <div className="flex flex-col">
-                              <span className="text-[10px] text-slate-500 font-black uppercase tracking-widest mb-1">Stock Reservoir</span>
-                              <span className={`text-2xl font-black italic tracking-tighter ${spare.quantity > 5 ? "text-emerald-600" : isLow ? "text-rose-600" : "text-amber-600"}`}>
-                                {spare.quantity} <span className="text-xs uppercase not-italic ml-1">Units</span>
-                              </span>
+                          <div className={`p-5 rounded-2xl border flex flex-col gap-4 transition-all ${isLow ? "bg-rose-50 border-rose-100" : "bg-slate-50 border-slate-200"}`}>
+                            <div className="flex justify-between items-center">
+                              <div className="flex flex-col">
+                                <span className="text-[10px] text-slate-500 font-black uppercase tracking-widest mb-1">Stock Reservoir</span>
+                                <span className={`text-2xl font-black italic tracking-tighter ${spare.quantity > 5 ? "text-emerald-600" : isLow ? "text-rose-600" : "text-amber-600"}`}>
+                                  {spare.quantity} <span className="text-xs uppercase not-italic ml-1">Units</span>
+                                </span>
+                              </div>
+                              <div className="flex flex-col items-end">
+                                <span className="text-[10px] text-slate-500 font-black uppercase tracking-widest mb-1 text-right flex items-center gap-1">
+                                  <Tag className="w-3 h-3" /> Unit Price
+                                </span>
+                                <span className="text-2xl font-black italic tracking-tighter text-blue-600">
+                                  <span className="text-xs uppercase not-italic mr-1">K</span>{spare.unitPrice?.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                                </span>
+                              </div>
                             </div>
-                            <div className="flex flex-col items-end">
-                              <span className="text-[10px] text-slate-500 font-black uppercase tracking-widest mb-1 text-right">Unit Price</span>
-                              <span className="text-2xl font-black italic tracking-tighter text-blue-600">
-                                <span className="text-xs uppercase not-italic mr-1">K</span>{spare.unitPrice?.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                            <div className="flex justify-between items-center border-t border-slate-200/60 pt-3">
+                              <span className="text-[10px] text-slate-500 font-black uppercase tracking-widest">Total Value</span>
+                              <span className="text-sm font-black italic tracking-tighter text-slate-700">
+                                <span className="text-[10px] uppercase not-italic mr-0.5">K</span>{(spare.quantity * (spare.unitPrice || 0)).toLocaleString(undefined, { minimumFractionDigits: 2 })}
                               </span>
                             </div>
                           </div>
@@ -3980,7 +3889,7 @@ export default function App() {
                               }
                               return (
                                 <option key={s.id} value={s.id} disabled={originalQty <= 0 && String(s.id) !== item.spareId}>
-                                  {s.name} ({originalQty} available)
+                                  {s.name} ({originalQty} available) - K{s.unitPrice?.toLocaleString()}
                                 </option>
                               );
                             })}
