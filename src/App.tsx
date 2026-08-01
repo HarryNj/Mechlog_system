@@ -1790,9 +1790,20 @@ export default function App() {
               </div>
 
               {authError && (
-                <div className="mb-6 p-4 bg-rose-50 border border-rose-100 rounded-2xl flex items-center gap-3 animate-in slide-in-from-top-2 duration-300">
-                  <AlertCircle className="w-5 h-5 text-rose-500 flex-shrink-0" />
-                  <p className="text-xs font-semibold text-rose-800 leading-relaxed">{authError}</p>
+                <div className="mb-6 p-4 bg-rose-50 border border-rose-100 rounded-2xl flex items-center justify-between gap-3 animate-in slide-in-from-top-2 duration-300">
+                  <div className="flex items-center gap-3">
+                    <AlertCircle className="w-5 h-5 text-rose-500 flex-shrink-0" />
+                    <p className="text-xs font-semibold text-rose-800 leading-relaxed">{authError}</p>
+                  </div>
+                  {authError.toLowerCase().includes("invalid login credential") && (
+                    <button
+                      type="button"
+                      onClick={() => { setAuthMode("forgot"); setAuthError(""); setAuthSuccess(""); }}
+                      className="text-xs font-bold text-rose-600 hover:text-rose-800 underline transition-colors whitespace-nowrap"
+                    >
+                      Forgot?
+                    </button>
+                  )}
                 </div>
               )}
 
