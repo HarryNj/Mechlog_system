@@ -1,6 +1,7 @@
 import { Request, Response, NextFunction } from 'express';
-import { supabase } from '../lib/supabase.ts';
 import crypto from 'crypto';
+import { getAuth } from 'firebase-admin/auth';
+import { adminApp } from '../lib/firebase-admin.ts';
 
 const JWT_SECRET = process.env.JWT_SECRET || 'eff-fleet-maintenance-system-secret-2026';
 
@@ -47,23 +48,23 @@ export const requireAuth = async (
   const parts = token.split('.');
   
   if (parts.length === 3) {
-    // Try to verify using Supabase (standard 3-segment JWT)
+    // Try to verify using standard JWT (Firebase)
     try {
-      const { data: { user }, error } = await supabase.auth.getUser(token);
-      if (user && !error) {
-        const lowerEmail = user.email?.toLowerCase() || '';
+      const decodedToken = await getAuth().verifyIdToken(token);
+      if (decodedToken) {
+        const lowerEmail = decodedToken.email?.toLowerCase() || '';
         const isAdminEmail = lowerEmail === "harrisonnjobvu@gmail.com" || lowerEmail === "harrisonnjobvu@gamil.com" || lowerEmail === "admin@effzambia.org" || lowerEmail === "admin@eff.org";
         req.user = {
-          uid: user.id,
-          email: user.email,
-          name: user.user_metadata?.full_name || user.user_metadata?.name || '',
+          uid: decodedToken.uid,
+          email: decodedToken.email,
+          name: decodedToken.name || '',
           role: isAdminEmail ? "admin" : "user",
-          phone_number: user.phone || ''
+          phone_number: decodedToken.phone_number || ''
         };
         return next();
       }
     } catch (err: any) {
-      console.warn("Supabase ID Token verification failed:", err?.message || err);
+      console.warn("ID Token verification failed:", err?.message || err);
     }
   } else if (parts.length === 2) {
     // Check custom cryptographic token (2 segments: payload.signature)

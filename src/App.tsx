@@ -1,8 +1,9 @@
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useRef, useMemo } from "react";
 import { motion, AnimatePresence } from "motion/react";
 import "react-phone-number-input/style.css";
 import PhoneInput from "react-phone-number-input";
 import { io } from "socket.io-client";
+import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from "recharts";
 import { 
   Plus, 
   Trash2, 
@@ -44,8 +45,10 @@ import {
 } from "lucide-react";
 import * as XLSX from "xlsx";
 
-import { supabase } from './lib/supabase.ts';
-import { Session, User as SupabaseUser } from '@supabase/supabase-js';
+import { auth, googleAuthProvider, db } from './lib/firebase.ts';
+import { collection, query, onSnapshot } from 'firebase/firestore';
+import { signInWithEmailAndPassword, createUserWithEmailAndPassword, updateProfile, sendPasswordResetEmail, signInWithPopup, signOut, onAuthStateChanged } from 'firebase/auth';
+import type { User } from 'firebase/auth';
 
 enum OperationType {
   CREATE = 'create',
@@ -71,9 +74,9 @@ function handleFirestoreError(error: unknown, operationType: OperationType, path
   const errInfo: FirestoreErrorInfo = {
     error: error instanceof Error ? error.message : String(error),
     authInfo: {
-      userId: user?.uid,
-      email: user?.email,
-      emailVerified: user?.emailVerified,
+      userId: auth.currentUser?.uid,
+      email: auth.currentUser?.email,
+      emailVerified: auth.currentUser?.emailVerified,
     },
     operationType,
     path
@@ -277,7 +280,7 @@ function AgreementModal({ isOpen, onClose }: { isOpen: boolean; onClose: () => v
 const isIframe = typeof window !== "undefined" && window.self !== window.top;
 
 export default function App() {
-  const [user, setUser] = useState<SupabaseUser | null>(null);
+  const [user, setUser] = useState<User | null>(null);
   const [dbUser, setDbUser] = useState<UserDBType | null>(null);
   const [authMode, setAuthMode] = useState<"signin" | "register" | "forgot">("signin");
   const [authEmail, setAuthEmail] = useState("");
@@ -429,7 +432,7 @@ export default function App() {
       }, (error) => {
         handleFirestoreError(error, OperationType.LIST, 'bikes');
       });
-      return () => subscription.unsubscribe();
+      return () => unsubscribe();
     } catch (e) {
       handleFirestoreError(e, OperationType.GET, 'bikes');
     }
@@ -453,7 +456,7 @@ export default function App() {
       }, (error) => {
         handleFirestoreError(error, OperationType.LIST, 'service_logs');
       });
-      return () => subscription.unsubscribe();
+      return () => unsubscribe();
     } catch (e) {
       handleFirestoreError(e, OperationType.GET, 'service_logs');
     }
@@ -465,12 +468,12 @@ export default function App() {
       const q = query(collection(db, 'service_requests'));
       const unsubscribe = onSnapshot(q, (snapshot) => {
         const requests = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as any as ServiceRequestType));
-        setServiceRequestsList(requests);
+        setRequestsList(requests);
         saveToStorage("requests", requests);
       }, (error) => {
         handleFirestoreError(error, OperationType.LIST, 'service_requests');
       });
-      return () => subscription.unsubscribe();
+      return () => unsubscribe();
     } catch (e) {
       handleFirestoreError(e, OperationType.GET, 'service_requests');
     }
@@ -487,7 +490,7 @@ export default function App() {
       }, (error) => {
         handleFirestoreError(error, OperationType.LIST, 'spares');
       });
-      return () => subscription.unsubscribe();
+      return () => unsubscribe();
     } catch (e) {
       handleFirestoreError(e, OperationType.GET, 'spares');
     }
@@ -506,12 +509,12 @@ export default function App() {
       }, (error) => {
         handleFirestoreError(error, OperationType.LIST, 'users');
       });
-      return () => subscription.unsubscribe();
+      return () => unsubscribe();
     } catch (e) {
       handleFirestoreError(e, OperationType.GET, 'users');
     }
   }, [user, dbUser]);
-  const [requestsList, setServiceRequestsList] = useState<ServiceRequestType[]>(() => loadFromStorage("requests"));
+  const [requestsList, setRequestsList] = useState<ServiceRequestType[]>(() => loadFromStorage("requests"));
 
 
   // Filtering & Searching State
@@ -561,8 +564,7 @@ export default function App() {
 
   // Track Auth State (Firebase and persistent)
   useEffect(() => {
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
-      const firebaseUser = session?.user;
+    const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
       if (firebaseUser) {
         // We have a firebase user, now sync with our DB/session
         const stored = localStorage.getItem("eff_user_session");
@@ -595,12 +597,12 @@ export default function App() {
       }
       setLoading(false);
     });
-    return () => subscription.unsubscribe();
+    return () => unsubscribe();
   }, []);
 
   // Sync authenticated user to PostgreSQL database
   // Sync authenticated user to PostgreSQL database
-  const syncUser = async (currentUser: SupabaseUser, overrideName?: string, overridePhone?: string) => {
+  const syncUser = async (currentUser: User, overrideName?: string, overridePhone?: string) => {
     try {
       const token = "dummy-token";
       const res = await fetch("/api/auth/sync", {
@@ -790,9 +792,7 @@ export default function App() {
     setAuthError("");
     setAuthSuccess("");
     try {
-      const { data: supaData, error } = await supabase.auth.signInWithPassword({ email: authEmail, password: authPassword });
-      if (error) throw error;
-      const userCredential = { user: supaData.user };
+      const userCredential = await signInWithEmailAndPassword(auth, authEmail, authPassword);
       const currentUser = userCredential.user;
 
       let data = { user: {} as any };
@@ -859,8 +859,7 @@ export default function App() {
     setAuthError("");
     setAuthSuccess("");
     try {
-      const { error } = await supabase.auth.resetPasswordForEmail(authEmail);
-      if (error) throw error;
+      await sendPasswordResetEmail(auth, authEmail);
       setAuthSuccess(`Password reset email has been sent successfully to ${authEmail}! Please check your inbox and follow the instructions.`);
     } catch (err: any) {
       console.warn("Firebase password reset warning:", err);
@@ -876,9 +875,8 @@ export default function App() {
     setAuthError("");
     setAuthSuccess("");
     try {
-      const { error } = await supabase.auth.signInWithOAuth({ provider: 'google', options: { redirectTo: window.location.origin } });
-      if (error) throw error;
-      // Note: for OAuth, Supabase redirects the browser. 
+      await signInWithPopup(auth, googleAuthProvider);
+       
       // The session will be captured by onAuthStateChange when returning.
     } catch (err: any) {
       console.error("Google Sign-In error:", err);
@@ -903,10 +901,9 @@ export default function App() {
     setAuthError("");
     setAuthSuccess("");
     try {
-      const { data: supaData, error } = await supabase.auth.signUp({ email: authEmail, password: authPassword, options: { data: { full_name: authName } } });
-      if (error) throw error;
-      const userCredential = { user: supaData.user };
+      const userCredential = await createUserWithEmailAndPassword(auth, authEmail, authPassword);
       const currentUser = userCredential.user;
+      await updateProfile(currentUser, { displayName: authName });
       // Profile updated via signUp options
       const token = "dummy-token";
 
@@ -967,7 +964,7 @@ export default function App() {
 
   const handleSignOut = async () => {
     try {
-      await supabase.auth.signOut();
+      await signOut(auth);
       localStorage.removeItem("eff_user_session");
       window.location.reload();
     } catch (err) {
@@ -1493,6 +1490,37 @@ export default function App() {
     if (!log.spares) return acc;
     return acc + log.spares.reduce((sum, s) => sum + (s.quantity * (s.priceAtTime || 0)), 0);
   }, 0);
+
+  // Monthly expenditure trends
+  const monthlyExpenditure = useMemo(() => {
+    const monthlyData: Record<string, number> = {};
+    logsList.forEach(log => {
+      if (!log.date) return;
+      const dateObj = new Date(log.date);
+      const monthYear = dateObj.toLocaleDateString('en-US', { month: 'short', year: '2-digit' });
+      
+      const logCost = log.spares ? log.spares.reduce((sum, s) => sum + (s.quantity * (s.priceAtTime || 0)), 0) : 0;
+      
+      if (!monthlyData[monthYear]) {
+        monthlyData[monthYear] = 0;
+      }
+      monthlyData[monthYear] += logCost;
+    });
+
+    const sortedKeys = Object.keys(monthlyData).sort((a, b) => {
+      // Parse "Jan 24" -> "Jan 2024"
+      const parseDate = (my) => {
+        const [m, y] = my.split(' ');
+        return new Date(m + " 20" + y).getTime();
+      };
+      return parseDate(a) - parseDate(b);
+    });
+
+    return sortedKeys.map(key => ({
+      name: key,
+      expenditure: monthlyData[key]
+    }));
+  }, [logsList]);
 
   // Grouped spares used stats
   const sparesUsedBreakdown: { [name: string]: number } = {};
@@ -2311,6 +2339,58 @@ export default function App() {
                   </div>
                 </motion.div>
               </div>
+
+              
+              {/* Expenditure Trends Chart */}
+              <motion.div
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ delay: 0.4 }}
+                className="bg-white p-6 rounded-2xl border border-emerald-500/10 shadow-sm"
+              >
+                <div className="flex items-center gap-3 mb-6">
+                  <div className="p-2 bg-emerald-50 text-emerald-600 rounded-lg">
+                    <TrendingUp className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <h3 className="font-bold text-slate-800">Monthly Expenditure Trends</h3>
+                    <p className="text-[11px] text-slate-500 font-medium">Tracking maintenance costs over time</p>
+                  </div>
+                </div>
+                <div className="h-[300px] w-full">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <LineChart data={monthlyExpenditure} margin={{ top: 5, right: 20, bottom: 5, left: 0 }}>
+                      <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
+                      <XAxis 
+                        dataKey="name" 
+                        axisLine={false}
+                        tickLine={false}
+                        tick={{ fontSize: 12, fill: '#64748b' }}
+                        dy={10}
+                      />
+                      <YAxis 
+                        axisLine={false}
+                        tickLine={false}
+                        tick={{ fontSize: 12, fill: '#64748b' }}
+                        tickFormatter={(value) => `K${value}`}
+                        width={60}
+                      />
+                      <Tooltip 
+                        contentStyle={{ borderRadius: '12px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1)' }}
+                        formatter={(value) => [`K${Number(value).toLocaleString(undefined, { minimumFractionDigits: 2 })}`, 'Expenditure']}
+                      />
+                      <Line 
+                        type="monotone" 
+                        dataKey="expenditure" 
+                        stroke="#10b981" 
+                        strokeWidth={3}
+                        dot={{ r: 4, fill: '#10b981', strokeWidth: 0 }}
+                        activeDot={{ r: 6, strokeWidth: 0, fill: '#059669' }}
+                      />
+                    </LineChart>
+                  </ResponsiveContainer>
+                </div>
+              </motion.div>
 
               {/* Quick Admin Protocol (Shortcut Matrix) */}
 

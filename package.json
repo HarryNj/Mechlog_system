@@ -16,7 +16,6 @@
   },
   "dependencies": {
     "@google/genai": "^2.4.0",
-    "@supabase/supabase-js": "^2.110.7",
     "@tailwindcss/vite": "^4.1.14",
     "@vitejs/plugin-react": "^5.0.4",
     "bcryptjs": "^3.0.3",
@@ -35,6 +34,7 @@
     "react": "^19.0.1",
     "react-dom": "^19.0.1",
     "react-phone-number-input": "^3.4.17",
+    "recharts": "^3.10.1",
     "socket.io": "^4.8.3",
     "socket.io-client": "^4.8.3",
     "vite": "^6.2.3",
