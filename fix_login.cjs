@@ -1,46 +1,40 @@
 const fs = require('fs');
-let code = fs.readFileSync('src/App.tsx', 'utf8');
+let code = fs.readFileSync('src/App.tsx', 'utf-8');
 
-code = code.replace(
-`      const res = await mockFetch("/api/auth/custom-login", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email: authEmail, password: authPassword })
-      });
-      const data = await res.json();
-      if (!res.ok) {
-        throw new Error(data.error || "Failed to sign in");
-      }
-      
-      const sessionUser = {
-        uid: data.user.uid,
-        email: data.user.email,
-        name: data.user.name,
-        phoneNumber: data.user.phoneNumber,
-        role: data.user.role,
-        token: data.token
-      };`,
-`      const userCredential = await signInWithEmailAndPassword(auth, authEmail, authPassword);
-      const currentUser = userCredential.user;
+// Fix handleEmailSignIn
+code = code.replace(/const res = await fetch\("\/api\/auth\/sync"[\s\S]*?if \(!res\.ok\) \{\s*throw new Error\(data\.error \|\| "Failed to sync user data"\);\s*\}/, 
+`let data = { user: {} };
+      try {
+        const res = await fetch("/api/auth/sync", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ email: currentUser.email })
+        });
+        if (res.ok) {
+          data = await res.json();
+        } else {
+          console.warn("Backend auth sync not available, using local session.");
+        }
+      } catch (err) {
+        console.warn("Backend auth sync failed, using local session.", err);
+      }`);
 
-      const res = await mockFetch("/api/auth/sync", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email: currentUser.email })
-      });
-      const data = await res.json();
-      if (!res.ok) {
-        throw new Error(data.error || "Failed to sync user data");
-      }
-      
-      const sessionUser = {
-        uid: data.user.uid,
-        email: data.user.email,
-        name: data.user.name,
-        phoneNumber: data.user.phoneNumber,
-        role: data.user.role,
-        token: "dummy-token"
-      };`
-);
+// Fix handleEmailRegister
+code = code.replace(/const res = await fetch\("\/api\/auth\/sync", \{\s*method: "POST",\s*headers: \{ "Content-Type": "application\/json", "Authorization": \`Bearer \$\{token\}\` \},\s*body: JSON\.stringify\(\{ email: currentUser\.email, name: authName, phoneNumber: finalPhone \}\)\s*\}\);\s*const data = await res\.json\(\);\s*if \(!res\.ok\) \{\s*throw new Error\(data\.error \|\| "Failed to sync user data"\);\s*\}/,
+`let data = { user: {} };
+      try {
+        const res = await fetch("/api/auth/sync", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "Authorization": \`Bearer \$\{token\}\` },
+          body: JSON.stringify({ email: currentUser.email, name: authName, phoneNumber: finalPhone })
+        });
+        if (res.ok) {
+          data = await res.json();
+        } else {
+          console.warn("Backend auth sync not available, using local session.");
+        }
+      } catch (err) {
+        console.warn("Backend auth sync failed, using local session.", err);
+      }`);
 
 fs.writeFileSync('src/App.tsx', code);

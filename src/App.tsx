@@ -305,7 +305,7 @@ export default function App() {
     const fetchDbStatus = async () => {
       try {
         const res = await fetch("/api/health");
-        const data = await res.json();
+        const data = await safeJson(res) || {};
         if (data.status === "ok") {
           setDbLayer(data.useFirestore ? "firestore" : "sql");
         }
@@ -358,12 +358,26 @@ export default function App() {
     setSyncing(false);
   };
 
+  const safeJson = async (res: Response) => {
+    try {
+      const contentType = res.headers.get("content-type");
+      if (contentType && contentType.includes("application/json")) {
+        return await res.clone().json();
+      }
+      return null;
+    } catch {
+      return null;
+    }
+  };
+
   const offlineFetch = async (url: string, options: any) => {
     if (navigator.onLine) {
       try {
         const res = await fetch(url, options);
-        if (!res.ok && res.status >= 500) {
-          throw new Error("Server Error");
+        if (!res.ok) {
+          if (res.status === 404 || res.status === 405 || res.status >= 500) {
+            throw new Error("Server or API Error");
+          }
         }
         return res;
       } catch (err) {
@@ -585,6 +599,7 @@ export default function App() {
   }, []);
 
   // Sync authenticated user to PostgreSQL database
+  // Sync authenticated user to PostgreSQL database
   const syncUser = async (currentUser: SupabaseUser, overrideName?: string, overridePhone?: string) => {
     try {
       const token = "dummy-token";
@@ -601,8 +616,9 @@ export default function App() {
           email: currentUser.email
         })
       });
+
       if (res.ok) {
-        const data = await res.json();
+        const data = await safeJson(res) || {};
         if (data.status === "success" && data.user) {
           setDbUser(data.user);
           saveToStorage("dbUser", data.user);
@@ -612,21 +628,17 @@ export default function App() {
       }
       await fetchData(currentUser as any, null);
     } catch (err) {
-      console.error("Error syncing user with DB:", err);
+      console.warn("Backend auth sync not available, using local session.", err);
       await fetchData(currentUser as any, null);
     }
   };
 
-  // Fetch all database records
-  const fetchData = async (currentUser = user, syncedDbUser = dbUser, isSilent = false) => {
-    if (!currentUser) return;
-    if (!isSilent) setSyncing(true);
-    
-    // Update online status
-    const currentOnline = window.navigator.onLine;
-    setIsOnline(currentOnline);
+  const fetchData = async (customUser?: any, syncedDbUser?: any, silent = false) => {
+    if (!customUser && !user) return;
+    const currentUser = customUser || user;
 
-    if (currentOnline && offlineQueue.length > 0) {
+    if (!silent) {
+      setLoading(true);
       await processOfflineQueue();
     }
 
@@ -643,8 +655,8 @@ export default function App() {
       }
 
       let finalDbUser = syncedDbUser;
-      if (userRes.ok) {
-        const userData = await userRes.json();
+      if (userRes && userRes.ok) {
+        const userData = await safeJson(userRes) || {};
         if (userData.status === "success") {
           finalDbUser = userData.user;
           setDbUser(finalDbUser);
@@ -677,8 +689,8 @@ export default function App() {
       
       // Bikes
       let freshBikes: any[] = [];
-      if (results[0].ok) {
-        freshBikes = await results[0].json();
+      if (results[0] && results[0].ok) {
+        freshBikes = await safeJson(results[0]) || [];
         setBikesList(freshBikes);
         saveToStorage("bikes", freshBikes);
       } else {
@@ -688,8 +700,8 @@ export default function App() {
 
       // Spares
       let freshSpares: any[] = [];
-      if (results[1].ok) {
-        freshSpares = await results[1].json();
+      if (results[1] && results[1].ok) {
+        freshSpares = await safeJson(results[1]) || [];
         setSparesList(freshSpares);
         saveToStorage("spares", freshSpares);
       } else {
@@ -698,8 +710,8 @@ export default function App() {
       }
 
       // Logs
-      if (results[2].ok) {
-        const data = await results[2].json();
+      if (results[2] && results[2].ok) {
+        const data = await safeJson(results[2]) || [];
         const mappedLogs = data.map((l: any) => {
           const bikeInfo = l.bike || freshBikes.find((b: any) => String(b.id) === String(l.bikeId));
           return {
@@ -718,84 +730,43 @@ export default function App() {
         setLogsList(mappedLogs);
         saveToStorage("logs", mappedLogs);
       } else {
-        setLogsList(loadFromStorage("logs") || []);
+        const cachedLogs = loadFromStorage("logs") || [];
+        setLogsList(cachedLogs);
       }
 
       // Requests
-      if (results[3].ok) {
-        const data = await results[3].json();
-        setServiceRequestsList(data);
+      if (results[3] && results[3].ok) {
+        const data = await safeJson(results[3]) || [];
+        setRequestsList(data);
         saveToStorage("requests", data);
       } else {
-        setServiceRequestsList(loadFromStorage("requests") || []);
+        setRequestsList(loadFromStorage("requests") || []);
       }
 
-      // Admin Users
-      if (isAdminUser) {
-        if (results[4] && results[4].ok) {
-          const data = await results[4].json();
-          setUsersList(data);
-          saveToStorage("users", data);
-        } else {
-          setUsersList(loadFromStorage("users") || []);
-        }
+      // Users
+      if (isAdminUser && results[4] && results[4].ok) {
+        const data = await safeJson(results[4]) || [];
+        setUsersList(data);
+        saveToStorage("users", data);
+      } else if (isAdminUser) {
+        setUsersList(loadFromStorage("users") || []);
       }
-      
-      const allOk = results.every(r => r.ok);
-      if (allOk) {
-        const now = new Date();
-        setLastSynced(now);
-        localStorage.setItem("lastSynced", now.toISOString());
-        setIsOnline(true);
-      } else {
-        setIsOnline(false);
-      }
-    } catch (err) {
-      console.warn("Network error, falling back to local storage:", err);
-      setIsOnline(false);
+
+      setLastSynced(new Date());
+      localStorage.setItem("lastSynced", new Date().toISOString());
+
+    } catch (error) {
+      console.error("Error fetching data:", error);
+      // Fallback
       setBikesList(loadFromStorage("bikes") || []);
       setSparesList(loadFromStorage("spares") || []);
       setLogsList(loadFromStorage("logs") || []);
-      setServiceRequestsList(loadFromStorage("requests") || []);
-      const cachedUser = loadFromStorage("dbUser");
-      if (cachedUser && !Array.isArray(cachedUser)) setDbUser(cachedUser);
+      setRequestsList(loadFromStorage("requests") || []);
+      setUsersList(loadFromStorage("users") || []);
     } finally {
-      if (!isSilent) setSyncing(false);
+      if (!silent) setLoading(false);
     }
   };
-
-  useEffect(() => {
-    const handleOnline = () => {
-      setIsOnline(true);
-      processOfflineQueue();
-    };
-    const handleOffline = () => setIsOnline(false);
-
-    window.addEventListener('online', handleOnline);
-    window.addEventListener('offline', handleOffline);
-
-    return () => {
-      window.removeEventListener('online', handleOnline);
-      window.removeEventListener('offline', handleOffline);
-    };
-  }, [offlineQueue]);
-
-  const fetchDataRef = useRef(fetchData);
-  useEffect(() => { fetchDataRef.current = fetchData; });
-
-  // Real-time socket sync
-  useEffect(() => {
-    const socket = io();
-
-    socket.on("data:updated", (data: { type: string }) => {
-      console.log("Data updated event received, refetching...", data);
-      fetchDataRef.current(undefined, undefined, true); // Silent update
-    });
-
-    return () => {
-      socket.disconnect();
-    };
-  }, []);
 
   // Automated background polling to sync data dynamically across all devices
   useEffect(() => {
@@ -805,7 +776,6 @@ export default function App() {
         fetchData(user, dbUser, true);
       }
     }, 10000); // Sync silently every 10 seconds
-
     return () => clearInterval(interval);
   }, [user, dbUser]);
 
@@ -825,16 +795,27 @@ export default function App() {
       const userCredential = { user: supaData.user };
       const currentUser = userCredential.user;
 
-      const res = await fetch("/api/auth/sync", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email: currentUser.email })
-      });
-      const data = await res.json();
-      if (!res.ok) {
-        throw new Error(data.error || "Failed to sync user data");
+      let data = { user: {} as any };
+      try {
+        const res = await fetch("/api/auth/sync", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ email: currentUser.email })
+        });
+        if (res.ok) {
+          const contentType = res.headers.get("content-type");
+          if (contentType && contentType.includes("application/json")) {
+            data = await safeJson(res) || {};
+          } else {
+            console.warn("Backend auth sync returned non-JSON.");
+          }
+        } else {
+          console.warn("Backend auth sync not available, using local session.");
+        }
+      } catch (err) {
+        console.warn("Backend auth sync failed, using local session.", err);
       }
-      
+
       const sessionUser = {
         uid: data.user?.uid || data.user?.id || supaData.user?.id,
         email: data.user?.email || supaData.user?.email,
@@ -843,10 +824,8 @@ export default function App() {
         role: data.user?.role || "user",
         token: "dummy-token"
       };
-
-      // Set session persistently in localStorage
+      
       localStorage.setItem("eff_user_session", JSON.stringify(sessionUser));
-
       const customUser = {
         uid: sessionUser.uid,
         email: sessionUser.email,
@@ -856,10 +835,9 @@ export default function App() {
         token: sessionUser.token,
         getIdToken: async () => sessionUser.token
       };
-
       setUser(customUser as any);
-      setDbUser(sessionUser);
-      setAuthSuccess(data.message || "Signed in successfully!");
+      setDbUser(sessionUser as any);
+      setAuthSuccess("Signed in successfully!");
       await fetchData(customUser as any, sessionUser);
     } catch (err: any) {
       console.error("Sign-in failed:", err);
@@ -868,6 +846,7 @@ export default function App() {
       setAuthLoading(false);
     }
   };
+
 
   // Handle Password Reset Email
   const handleForgotPassword = async (e: React.FormEvent) => {
@@ -897,7 +876,7 @@ export default function App() {
     setAuthError("");
     setAuthSuccess("");
     try {
-      const { error } = await supabase.auth.signInWithOAuth({ provider: 'google' });
+      const { error } = await supabase.auth.signInWithOAuth({ provider: 'google', options: { redirectTo: window.location.origin } });
       if (error) throw error;
       // Note: for OAuth, Supabase redirects the browser. 
       // The session will be captured by onAuthStateChange when returning.
@@ -931,14 +910,25 @@ export default function App() {
       // Profile updated via signUp options
       const token = "dummy-token";
 
-      const res = await fetch("/api/auth/sync", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "Authorization": `Bearer ${token}` },
-        body: JSON.stringify({ email: currentUser.email, name: authName, phoneNumber: finalPhone })
-      });
-      const data = await res.json();
-      if (!res.ok) {
-        throw new Error(data.error || "Failed to sync user data");
+      let data = { user: {} };
+      try {
+        const res = await fetch("/api/auth/sync", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "Authorization": `Bearer ${token}` },
+          body: JSON.stringify({ email: currentUser.email, name: authName, phoneNumber: finalPhone })
+        });
+        if (res.ok) {
+          const contentType = res.headers.get("content-type");
+          if (contentType && contentType.includes("application/json")) {
+            data = await safeJson(res) || {};
+          } else {
+            console.warn("Backend auth sync returned non-JSON.");
+          }
+        } else {
+          console.warn("Backend auth sync not available, using local session.");
+        }
+      } catch (err) {
+        console.warn("Backend auth sync failed, using local session.", err);
       }
 
       const sessionUser = {
@@ -1021,7 +1011,7 @@ export default function App() {
       });
 
       if (!res.ok) {
-        const errData = await res.json();
+        const errData = await safeJson(res) || {};
         alert(errData.error || "Failed to save user");
         return;
       }
@@ -1045,7 +1035,7 @@ export default function App() {
       });
 
       if (!res.ok) {
-        const errData = await res.json();
+        const errData = await safeJson(res) || {};
         alert(errData.error || "Failed to delete user");
         return;
       }
@@ -1089,7 +1079,7 @@ export default function App() {
       });
 
       if (!res.ok) {
-        const errData = await res.json();
+        const errData = await safeJson(res) || {};
         alert(errData.error || "Failed to submit request");
         return;
       }
@@ -1113,7 +1103,7 @@ export default function App() {
       });
 
       if (!res.ok) {
-        const errData = await res.json();
+        const errData = await safeJson(res) || {};
         alert(errData.error || "Failed to delete request");
         return;
       }
@@ -1204,7 +1194,7 @@ export default function App() {
       });
 
       if (!res.ok) {
-        const errorData = await res.json();
+        const errorData = await safeJson(res) || {};
         alert(errorData.error || "Failed to save bike");
         return;
       }
@@ -1283,7 +1273,7 @@ export default function App() {
       });
 
       if (!res.ok) {
-        const errorData = await res.json();
+        const errorData = await safeJson(res) || {};
         alert(errorData.error || "Failed to save spare");
         return;
       }
@@ -1414,7 +1404,7 @@ export default function App() {
       });
 
       if (!res.ok) {
-        const errorData = await res.json();
+        const errorData = await safeJson(res) || {};
         alert(errorData.error || "Failed to save service log");
         return;
       }

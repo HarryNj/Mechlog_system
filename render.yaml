@@ -1,0 +1,9 @@
+services:
+  - type: web
+    name: mechanic-spare-log
+    env: node
+    buildCommand: npm install --include=dev && npm run build
+    startCommand: npm start
+    envVars:
+      - key: NODE_VERSION
+        value: 22.x
