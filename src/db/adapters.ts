@@ -53,9 +53,9 @@ export async function getAllUsers(): Promise<any[]> {
 
 export async function getUserByUid(uid: string): Promise<any> {
   if (useFirestore) {
-    const snapshot = await adminDb.collection("users").where("uid", "==", uid).limit(1).get();
-    if (snapshot.empty) return null;
-    const data = snapshot.docs[0].data();
+    const docSnap = await adminDb.collection("users").doc(uid).get();
+    if (!docSnap.exists) return null;
+    const data = docSnap.data();
     return {
       ...data,
       createdAt: data.createdAt?.toDate ? data.createdAt.toDate() : data.createdAt

@@ -1,7 +1,6 @@
 import { Request, Response, NextFunction } from 'express';
 import crypto from 'crypto';
-import { getAuth } from 'firebase-admin/auth';
-import { adminApp } from '../lib/firebase-admin.ts';
+import { adminAuth } from '../lib/firebase-admin.ts';
 
 const JWT_SECRET = process.env.JWT_SECRET || 'eff-fleet-maintenance-system-secret-2026';
 
@@ -47,10 +46,10 @@ export const requireAuth = async (
   const token = authHeader.split('Bearer ')[1];
   const parts = token.split('.');
   
-  if (parts.length === 3) {
+    if (parts.length === 3) {
     // Try to verify using standard JWT (Firebase)
     try {
-      const decodedToken = await getAuth().verifyIdToken(token);
+      const decodedToken = await adminAuth.verifyIdToken(token);
       if (decodedToken) {
         const lowerEmail = decodedToken.email?.toLowerCase() || '';
         const isAdminEmail = lowerEmail === "harrisonnjobvu@gmail.com" || lowerEmail === "harrisonnjobvu@gamil.com" || lowerEmail === "admin@effzambia.org" || lowerEmail === "admin@eff.org";

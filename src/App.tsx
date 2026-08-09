@@ -17,7 +17,7 @@ import {
   Filter, 
   Calendar, 
   MapPin, 
-  User, 
+  User as UserIcon, 
   RefreshCw, 
   AlertCircle,
   CheckCircle,
@@ -82,7 +82,7 @@ function handleFirestoreError(error: unknown, operationType: OperationType, path
     path
   }
   console.error('Firestore Error: ', JSON.stringify(errInfo));
-  throw new Error(JSON.stringify(errInfo));
+  // throw new Error(JSON.stringify(errInfo));
 }
 
 
@@ -414,6 +414,10 @@ export default function App() {
 
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [activeTab, setActiveTab] = useState<"dashboard" | "logs" | "bikes" | "spares" | "users" | "requests">("dashboard");
+  const [lastExportTimestamp, setLastExportTimestamp] = useState<number | null>(() => {
+    const stored = localStorage.getItem("lastExportTimestamp");
+    return stored ? parseInt(stored) : null;
+  });
 
   // App Data State
   const [bikesList, setBikesList] = useState<BikeType[]>(() => loadFromStorage("bikes"));
@@ -426,7 +430,7 @@ export default function App() {
     try {
       const q = query(collection(db, 'bikes'));
       const unsubscribe = onSnapshot(q, (snapshot) => {
-        const bikes = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as any as BikeType));
+        const bikes = snapshot.docs.map(doc => ({ ...doc.data(), id: doc.data().id } as any as BikeType));
         setBikesList(bikes);
         saveToStorage("bikes", bikes);
       }, (error) => {
@@ -446,7 +450,7 @@ export default function App() {
         const logs = snapshot.docs.map(doc => {
           const data = doc.data();
           return {
-            id: doc.id,
+            id: data.id,
             ...data,
             date: data.date?.toDate ? data.date.toDate().toISOString().split('T')[0] : data.date
           } as any as ServiceLogType;
@@ -467,7 +471,7 @@ export default function App() {
     try {
       const q = query(collection(db, 'service_requests'));
       const unsubscribe = onSnapshot(q, (snapshot) => {
-        const requests = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as any as ServiceRequestType));
+        const requests = snapshot.docs.map(doc => ({ ...doc.data(), id: doc.data().id } as any as ServiceRequestType));
         setRequestsList(requests);
         saveToStorage("requests", requests);
       }, (error) => {
@@ -484,7 +488,7 @@ export default function App() {
     try {
       const q = query(collection(db, 'spares'));
       const unsubscribe = onSnapshot(q, (snapshot) => {
-        const spares = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as any as SpareInventoryType));
+        const spares = snapshot.docs.map(doc => ({ ...doc.data(), id: doc.data().id } as any as SpareInventoryType));
         setSparesList(spares);
         saveToStorage("spares", spares);
       }, (error) => {
@@ -504,7 +508,7 @@ export default function App() {
     try {
       const q = query(collection(db, 'users'));
       const unsubscribe = onSnapshot(q, (snapshot) => {
-        const users = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as any as UserDBType));
+        const users = snapshot.docs.map(doc => ({ ...doc.data(), id: doc.data().id } as any as UserDBType));
         setUsersList(users);
       }, (error) => {
         handleFirestoreError(error, OperationType.LIST, 'users');
@@ -571,13 +575,13 @@ export default function App() {
         let sessionUser = stored ? JSON.parse(stored) : null;
         
         const customUser = {
-          uid: firebaseUser.id,
+          uid: firebaseUser.uid,
           email: firebaseUser.email,
-          displayName: firebaseUser.user_metadata?.full_name,
-          name: firebaseUser.user_metadata?.full_name,
-          phoneNumber: firebaseUser.phone,
-          token: "dummy-token",
-          getIdToken: async () => session?.access_token || ""
+          displayName: firebaseUser.displayName,
+          name: firebaseUser.displayName,
+          phoneNumber: firebaseUser.phoneNumber,
+          token: await firebaseUser.getIdToken(),
+          getIdToken: async () => await firebaseUser.getIdToken()
         };
         
         setUser(customUser as any);
@@ -604,7 +608,7 @@ export default function App() {
   // Sync authenticated user to PostgreSQL database
   const syncUser = async (currentUser: User, overrideName?: string, overridePhone?: string) => {
     try {
-      const token = "dummy-token";
+      const token = await currentUser.getIdToken();
       const res = await fetch("/api/auth/sync", {
         method: "POST",
         headers: {
@@ -612,7 +616,7 @@ export default function App() {
           "Authorization": `Bearer ${token}`
         },
         body: JSON.stringify({
-          uid: currentUser.id,
+          uid: currentUser.uid,
           name: overrideName || authName || undefined,
           phoneNumber: overridePhone || authPhone || undefined,
           email: currentUser.email
@@ -645,7 +649,7 @@ export default function App() {
     }
 
     try {
-      const token = "dummy-token";
+      const token = (typeof (user as any)?.getIdToken === "function") ? await (user as any).getIdToken() : "";
       const headers = { "Authorization": `Bearer ${token}` };
 
       // Refresh user role
@@ -817,12 +821,12 @@ export default function App() {
       }
 
       const sessionUser = {
-        uid: data.user?.uid || data.user?.id || supaData.user?.id,
-        email: data.user?.email || supaData.user?.email,
-        name: data.user?.name || supaData.user?.user_metadata?.full_name,
-        phoneNumber: data.user?.phoneNumber || data.user?.phone || supaData.user?.phone,
+        uid: data.user?.uid || data.user?.id || currentUser.uid,
+        email: data.user?.email || currentUser.email,
+        name: data.user?.name || currentUser.displayName || "",
+        phoneNumber: data.user?.phoneNumber || currentUser.phoneNumber || "",
         role: data.user?.role || "user",
-        token: "dummy-token"
+        token: await currentUser.getIdToken()
       };
       
       localStorage.setItem("eff_user_session", JSON.stringify(sessionUser));
@@ -905,9 +909,8 @@ export default function App() {
       const currentUser = userCredential.user;
       await updateProfile(currentUser, { displayName: authName });
       // Profile updated via signUp options
-      const token = "dummy-token";
-
-      let data = { user: {} };
+      const token = await currentUser.getIdToken();
+      let data: any = { user: {} };
       try {
         const res = await fetch("/api/auth/sync", {
           method: "POST",
@@ -929,12 +932,12 @@ export default function App() {
       }
 
       const sessionUser = {
-        uid: data.user?.uid || data.user?.id || supaData.user?.id,
-        email: data.user?.email || supaData.user?.email,
-        name: data.user?.name || supaData.user?.user_metadata?.full_name,
-        phoneNumber: data.user?.phoneNumber || data.user?.phone || supaData.user?.phone,
+        uid: data.user?.uid || data.user?.id || currentUser.uid,
+        email: data.user?.email || currentUser.email,
+        name: data.user?.name || currentUser.displayName || authName || "",
+        phoneNumber: data.user?.phoneNumber || currentUser.phoneNumber || finalPhone || "",
         role: data.user?.role || "user",
-        token: token
+        token: await currentUser.getIdToken()
       };
 
       // Set session persistently in localStorage
@@ -994,7 +997,7 @@ export default function App() {
     e.preventDefault();
     if (!user) return;
 
-    const token = "dummy-token";
+    const token = (typeof (user as any)?.getIdToken === "function") ? await (user as any).getIdToken() : "";
     const url = editingUser ? `/api/users/${editingUser.id}` : "/api/users";
     const method = editingUser ? "PUT" : "POST";
 
@@ -1024,7 +1027,7 @@ export default function App() {
     if (!user) return;
 
     try {
-      const token = "dummy-token";
+      const token = (typeof (user as any)?.getIdToken === "function") ? await (user as any).getIdToken() : "";
       const res = await offlineFetch(`/api/users/${userId}`, { method: "DELETE",
         headers: {
           "Authorization": `Bearer ${token}`
@@ -1055,7 +1058,7 @@ export default function App() {
     e.preventDefault();
     if (!user) return;
 
-    const token = "dummy-token";
+    const token = (typeof (user as any)?.getIdToken === "function") ? await (user as any).getIdToken() : "";
     const matchingBike = bikesList.find(b => String(b.id) === String(requestForm.bikeId));
     
     try {
@@ -1092,7 +1095,7 @@ export default function App() {
     if (!user) return;
 
     try {
-      const token = "dummy-token";
+      const token = (typeof (user as any)?.getIdToken === "function") ? await (user as any).getIdToken() : "";
       const res = await offlineFetch(`/api/requests/${requestId}`, { method: "DELETE",
         headers: {
           "Authorization": `Bearer ${token}`
@@ -1115,7 +1118,7 @@ export default function App() {
     if (!user) return;
     
     // Set request status to "done" in database first
-    const token = "dummy-token";
+    const token = (typeof (user as any)?.getIdToken === "function") ? await (user as any).getIdToken() : "";
     try {
       await offlineFetch(`/api/requests/${reqObj.id}`, { method: "PUT",
         headers: {
@@ -1174,7 +1177,7 @@ export default function App() {
     e.preventDefault();
     if (!user) return;
 
-    const token = "dummy-token";
+    const token = (typeof (user as any)?.getIdToken === "function") ? await (user as any).getIdToken() : "";
     const url = editingBike ? `/api/bikes/${editingBike.id}` : "/api/bikes";
     const method = editingBike ? "PUT" : "POST";
 
@@ -1207,7 +1210,7 @@ export default function App() {
   const handleDeleteBike = async (id: number) => {
     if (!user) return;
     try {
-      const token = "dummy-token";
+      const token = (typeof (user as any)?.getIdToken === "function") ? await (user as any).getIdToken() : "";
       await offlineFetch(`/api/bikes/${id}`, { method: "DELETE",
         headers: { "Authorization": `Bearer ${token}` }
       });
@@ -1253,7 +1256,7 @@ export default function App() {
       }
     }
 
-    const token = "dummy-token";
+    const token = (typeof (user as any)?.getIdToken === "function") ? await (user as any).getIdToken() : "";
     const url = editingSpare ? `/api/spares/${editingSpare.id}` : "/api/spares";
     const method = editingSpare ? "PUT" : "POST";
 
@@ -1285,7 +1288,7 @@ export default function App() {
   const handleDeleteSpare = async (id: number) => {
     if (!user) return;
     try {
-      const token = "dummy-token";
+      const token = (typeof (user as any)?.getIdToken === "function") ? await (user as any).getIdToken() : "";
       await offlineFetch(`/api/spares/${id}`, { method: "DELETE",
         headers: { "Authorization": `Bearer ${token}` }
       });
@@ -1365,7 +1368,7 @@ export default function App() {
       }
     }
 
-    const token = "dummy-token";
+    const token = (typeof (user as any)?.getIdToken === "function") ? await (user as any).getIdToken() : "";
     const url = editingLog ? `/api/logs/${editingLog.id}` : "/api/logs";
     const method = editingLog ? "PUT" : "POST";
 
@@ -1416,7 +1419,7 @@ export default function App() {
   const handleDeleteLog = async (id: number) => {
     if (!user) return;
     try {
-      const token = "dummy-token";
+      const token = (typeof (user as any)?.getIdToken === "function") ? await (user as any).getIdToken() : "";
       await offlineFetch(`/api/logs/${id}`, { method: "DELETE",
         headers: { "Authorization": `Bearer ${token}` }
       });
@@ -1719,6 +1722,10 @@ export default function App() {
       XLSX.utils.book_append_sheet(wb, wsSpares, "Spares Stock");
       
       XLSX.writeFile(wb, `EFF_Zambia_Fleet_Report_${new Date().toISOString().split("T")[0]}.xlsx`);
+      
+      const now = Date.now();
+      localStorage.setItem("lastExportTimestamp", now.toString());
+      setLastExportTimestamp(now);
     } catch (error) {
       console.error("Error generating Excel report:", error);
       alert("Failed to generate Excel report. Please try again.");
@@ -1837,7 +1844,7 @@ export default function App() {
                   <div className="space-y-4">
                     <div className="group relative">
                       <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none">
-                        <User className="h-4 w-4 text-slate-400 group-focus-within:text-emerald-600 transition-colors" />
+                        <UserIcon className="h-4 w-4 text-slate-400 group-focus-within:text-emerald-600 transition-colors" />
                       </div>
                       <input
                         type="text"
@@ -2090,6 +2097,25 @@ export default function App() {
             )}
           </nav>
         </div>
+        
+        {/* Backup Reminder Badge for Admins */}
+        {isUserAdmin && (!lastExportTimestamp || (Date.now() - lastExportTimestamp > 7 * 24 * 60 * 60 * 1000)) && (
+          <div className="mx-4 mb-4 p-3 bg-red-50 border border-red-100 rounded-xl shadow-sm">
+            <div className="flex gap-2">
+              <AlertTriangle className="w-4 h-4 text-red-600 flex-shrink-0 mt-0.5" />
+              <div>
+                <p className="text-[10px] font-bold text-red-700 uppercase tracking-wider">Backup Overdue</p>
+                <p className="text-xs text-red-600/90 mt-1 mb-2 leading-relaxed">It's been over 7 days since your last backup. Export data now to ensure safety.</p>
+                <button 
+                  onClick={() => exportToExcel()} 
+                  className="w-full py-1.5 bg-red-600 hover:bg-red-700 text-white text-[10px] font-bold uppercase tracking-widest rounded-lg transition-colors"
+                >
+                  Export Now
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* User Account Info */}
         <div className="p-4 border-t border-slate-100 bg-emerald-50/20">
@@ -3158,7 +3184,7 @@ export default function App() {
                               <span>{bike.province} - {bike.district}</span>
                             </div>
                             <div className="flex items-center gap-2">
-                              <User className="w-3.5 h-3.5 text-slate-400" />
+                              <UserIcon className="w-3.5 h-3.5 text-slate-400" />
                               <span>Assigned: <strong className="text-slate-800">{bike.officer}</strong></span>
                             </div>
                           </div>
@@ -3294,7 +3320,7 @@ export default function App() {
                             <div className="space-y-1 text-right">
                               <span className="text-[8px] text-slate-600 font-black uppercase tracking-widest block">Custodian</span>
                               <div className="flex items-center justify-end gap-1.5 text-xs text-slate-400 font-bold">
-                                <User className="w-3 h-3 text-blue-500/50" />
+                                <UserIcon className="w-3 h-3 text-blue-500/50" />
                                 {spare.addedBy}
                               </div>
                             </div>

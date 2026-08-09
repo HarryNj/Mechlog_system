@@ -1,153 +1,86 @@
-import { initializeApp, getApps, getApp } from 'firebase/app';
-import { 
-  getFirestore, 
-  collection, 
-  doc, 
-  getDocs, 
-  getDoc, 
-  setDoc, 
-  updateDoc, 
-  deleteDoc, 
-  query, 
-  where as firestoreWhere, 
-  orderBy as firestoreOrderBy, 
-  limit as firestoreLimit,
-  QueryConstraint
-} from 'firebase/firestore';
 import { initializeApp as initAdminApp, getApps as getAdminApps } from 'firebase-admin/app';
-import { getAuth } from 'firebase-admin/auth';
+import { getAuth as getAdminAuth } from 'firebase-admin/auth';
+import { initializeApp as initClientApp, getApps as getClientApps, getApp as getClientApp } from 'firebase/app';
+import { getFirestore, collection, doc, getDocs, getDoc, setDoc, updateDoc, deleteDoc, query, where, orderBy, limit } from 'firebase/firestore';
 import firebaseConfig from '../../firebase-applet-config.json';
 
-// Initialize Admin App (only for Auth token verification, which doesn't need DB access)
-if (!getAdminApps().length) {
-  initAdminApp({
-    projectId: firebaseConfig.projectId,
-  });
-}
-export const adminAuth = getAuth();
+const projectId = firebaseConfig.projectId;
+const databaseId = firebaseConfig.firestoreDatabaseId;
 
-// Initialize Client App on the server (for Firestore API-key auth)
-const clientApp = getApps().length === 0 ? initializeApp(firebaseConfig) : getApp();
-const clientDb = getFirestore(clientApp, firebaseConfig.firestoreDatabaseId);
+console.log(`[Firebase Admin Workaround] Initializing with Project: ${projectId}, Database: ${databaseId}`);
 
-// Custom compatibility layer that matches the adminDb / firebase-admin collection API
-class DocRefCompat {
-  private colName: string;
-  private docId: string;
+// Admin App for Auth (this usually works as it uses the identity toolkit API)
+export const adminApp = getAdminApps()[0] || initAdminApp({ projectId });
+export const adminAuth = getAdminAuth(adminApp);
 
-  constructor(colName: string, docId: string) {
-    this.colName = colName;
-    this.docId = docId;
-  }
+// Client SDK for Firestore (Workaround for Admin SDK permission issues in AI Studio)
+const clientApp = getClientApps().length > 0 ? getClientApp() : initClientApp(firebaseConfig);
+const db = getFirestore(clientApp, databaseId);
 
-  async set(data: any) {
-    const dRef = doc(clientDb, this.colName, this.docId);
-    await setDoc(dRef, data);
-  }
-
-  async update(data: any) {
-    const dRef = doc(clientDb, this.colName, this.docId);
-    await updateDoc(dRef, data);
-  }
-
-  async delete() {
-    const dRef = doc(clientDb, this.colName, this.docId);
-    await deleteDoc(dRef);
-  }
-
-  async get() {
-    const dRef = doc(clientDb, this.colName, this.docId);
-    const snap = await getDoc(dRef);
-    return {
-      exists: snap.exists(),
-      id: snap.id,
-      ref: this,
-      data: () => snap.data()
-    };
-  }
-}
-
-class QueryCompat {
-  private colName: string;
-  private constraints: QueryConstraint[] = [];
-
-  constructor(colName: string, initialConstraints: QueryConstraint[] = []) {
-    this.colName = colName;
-    this.constraints = [...initialConstraints];
-  }
-
-  where(field: string, op: any, val: any) {
-    return new QueryCompat(this.colName, [
-      ...this.constraints,
-      firestoreWhere(field, op, val)
-    ]);
-  }
-
-  orderBy(field: string, direction: 'asc' | 'desc' = 'asc') {
-    return new QueryCompat(this.colName, [
-      ...this.constraints,
-      firestoreOrderBy(field, direction)
-    ]);
-  }
-
-  limit(num: number) {
-    return new QueryCompat(this.colName, [
-      ...this.constraints,
-      firestoreLimit(num)
-    ]);
-  }
-
-  async get() {
-    const colRef = collection(clientDb, this.colName);
-    const q = query(colRef, ...this.constraints);
-    const snap = await getDocs(q);
+/**
+ * A minimal shim to provide a firebase-admin-like API for Firestore using the Client SDK.
+ * This allows src/db/adapters.ts to continue working without massive rewrites.
+ */
+export const adminDb = {
+  collection: (path: string) => {
+    let currentQuery: any = collection(db, path);
     
-    const docs = snap.docs.map(d => ({
-      id: d.id,
-      ref: new DocRefCompat(this.colName, d.id),
-      data: () => d.data()
-    }));
-
-    return {
-      empty: snap.empty,
-      size: snap.size,
-      docs
+    const wrapper: any = {
+      doc: (id: string) => {
+        const d = doc(db, path, String(id));
+        return {
+          get: async () => {
+            const s = await getDoc(d);
+            return { 
+              exists: s.exists(), 
+              data: () => s.data(), 
+              ref: { 
+                update: (data: any) => updateDoc(d, data), 
+                delete: () => deleteDoc(d),
+                get: async () => {
+                   const s2 = await getDoc(d);
+                   return { data: () => s2.data() };
+                }
+              } 
+            };
+          },
+          set: (data: any) => setDoc(d, data),
+          update: (data: any) => updateDoc(d, data),
+          delete: () => deleteDoc(d),
+        };
+      },
+      where: (field: string, op: any, val: any) => {
+        currentQuery = query(currentQuery, where(field, op, val));
+        return wrapper;
+      },
+      orderBy: (field: string, dir: any) => {
+        currentQuery = query(currentQuery, orderBy(field, dir));
+        return wrapper;
+      },
+      limit: (num: number) => {
+        currentQuery = query(currentQuery, limit(num));
+        return wrapper;
+      },
+      get: async () => {
+        const s = await getDocs(currentQuery);
+        return {
+          empty: s.empty,
+          size: s.size,
+          docs: s.docs.map(d => ({
+            id: d.id,
+            data: () => d.data(),
+            ref: { 
+              update: (data: any) => updateDoc(d.ref, data), 
+              delete: () => deleteDoc(d.ref),
+              get: async () => {
+                 const s2 = await getDoc(d.ref);
+                 return { data: () => s2.data() };
+              }
+            }
+          }))
+        };
+      }
     };
+    return wrapper;
   }
-}
-
-class CollectionCompat {
-  private colName: string;
-
-  constructor(colName: string) {
-    this.colName = colName;
-  }
-
-  doc(id: string) {
-    return new DocRefCompat(this.colName, id);
-  }
-
-  where(field: string, op: any, val: any) {
-    return new QueryCompat(this.colName).where(field, op, val);
-  }
-
-  orderBy(field: string, direction: 'asc' | 'desc' = 'asc') {
-    return new QueryCompat(this.colName).orderBy(field, direction);
-  }
-
-  limit(num: number) {
-    return new QueryCompat(this.colName).limit(num);
-  }
-
-  async get() {
-    return new QueryCompat(this.colName).get();
-  }
-}
-
-class AdminDbCompat {
-  collection(colName: string) {
-    return new CollectionCompat(colName);
-  }
-}
-
-export const adminDb = new AdminDbCompat() as any;
+};

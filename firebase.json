@@ -1,5 +1,6 @@
 {
   "firestore": {
+    "database": "ai-studio-mechanicsparelog-711249d4-f261-430e-9cd5-ea926e65a85a",
     "rules": "firestore.rules"
   },
   "hosting": {

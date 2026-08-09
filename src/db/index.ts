@@ -12,7 +12,7 @@ export const createPool = () => {
     keepAlive: true,
   };
 
-  if (process.env.DATABASE_URL) {
+  if (process.env.DATABASE_URL && process.env.DATABASE_URL.startsWith('postgres')) {
     return new Pool({
       ...baseConfig,
       connectionString: process.env.DATABASE_URL,

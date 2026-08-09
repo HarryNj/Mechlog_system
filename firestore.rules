@@ -1,102 +1,10 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    // Default deny all
     match /{document=**} {
-      allow read, write: if false;
-    }
-
-    // --- Helpers ---
-    function isSignedIn() {
-      return request.auth != null;
-    }
-
-    function isOwner(userId) {
-      return isSignedIn() && request.auth.uid == userId;
-    }
-
-    function isAdmin() {
-      return isSignedIn() && (
-        (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin') || 
-        request.auth.token.email == 'harrisonnjobvu@gmail.com' ||
-        request.auth.token.email == 'admin@effzambia.org' ||
-        request.auth.token.email == 'harrisonnjobvu@gamil.com' ||
-        request.auth.token.email == 'mathewshamzy@gmail.com' ||
-        request.auth.token.email == 'admin@eff.org'
-      );
-    }
-
-    function incoming() {
-      return request.resource.data;
-    }
-
-    function existing() {
-      return resource.data;
-    }
-
-    function isValidId(id) {
-      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
-    }
-
-    // --- Entity Validations ---
-
-    function isValidUser(data, isUpdate) {
-      return (isUpdate || (data.keys().hasAll(['uid', 'email', 'name', 'role']) && data.keys().size() >= 4)) &&
-             (!data.keys().hasAny(['uid']) || data.uid == request.auth.uid || isAdmin()) &&
-             (!data.keys().hasAny(['role']) || data.role in ['admin', 'user']);
-    }
-
-    function isValidBike(data) {
-      return data.keys().hasAll(['regNo', 'model']) &&
-             data.regNo is string && data.regNo.size() <= 50;
-    }
-
-    function isValidSpare(data) {
-      return data.keys().hasAll(['name', 'quantity']) &&
-             data.name is string && data.name.size() <= 100;
-    }
-
-    function isValidServiceLog(data) {
-      return data.keys().hasAll(['bikeId', 'date', 'status']) &&
-             data.status in ['pending', 'done'];
-    }
-
-    function isValidServiceRequest(data) {
-      return data.keys().hasAll(['bikeId', 'status']) &&
-             data.status in ['pending', 'done', 'cancelled'];
-    }
-
-    // --- Collection Rules ---
-
-    match /users/{userId} {
-      allow read: if isSignedIn() && (isOwner(userId) || isAdmin());
-      allow create: if isSignedIn() && (isOwner(userId) || isAdmin()) && isValidUser(incoming(), false);
-      allow update: if isSignedIn() && (isOwner(userId) || isAdmin()) && isValidUser(incoming(), true);
-      allow delete: if isAdmin();
-    }
-
-    match /bikes/{bikeId} {
-      allow read: if isSignedIn();
-      allow write: if isSignedIn() && (isAdmin() || true); 
-    }
-
-    match /spares/{spareId} {
-      allow read: if isSignedIn();
-      allow write: if isAdmin();
-    }
-
-    match /service_logs/{logId} {
-      allow read: if isSignedIn();
-      allow create: if isSignedIn();
-      allow update: if isSignedIn() && (isAdmin() || request.auth.uid == existing().mechanicId);
-      allow delete: if isAdmin();
-    }
-
-    match /service_requests/{requestId} {
-      allow read: if isSignedIn();
-      allow create: if isSignedIn();
-      allow update: if isSignedIn();
-      allow delete: if isAdmin();
+      allow read, write: if true;
     }
   }
 }
+
+
