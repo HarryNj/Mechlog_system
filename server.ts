@@ -294,7 +294,7 @@ async function startServer() {
       // Determine role
       const allUsers = await getAllUsers();
       const isFirstUser = allUsers.length === 0;
-      const isAdminEmail = lowerEmail === "harrisonnjobvu@gmail.com" || lowerEmail === "harrisonnjobvu@gamil.com" || lowerEmail === "admin@effzambia.org";
+      const isAdminEmail = lowerEmail === "harrisonnjobvu@gmail.com" || lowerEmail === "harrisonnjobvu@gamil.com" || lowerEmail === "admin@effzambia.org" || lowerEmail === "admin@eff.org" || lowerEmail === "mathewshamzy@gmail.com";
       const role = (isFirstUser || isAdminEmail) ? "admin" : "user";
 
       const newUser = await createUser({
@@ -752,6 +752,7 @@ async function startServer() {
         role: role || "user"
       });
 
+      req.app.get("io").emit("data:updated", { type: "users" });
       res.json({ status: "success", user: newUser });
     } catch (error: any) {
       console.error("Error creating user:", error);
@@ -791,6 +792,7 @@ async function startServer() {
       }
 
       await deleteUser(userId);
+      req.app.get("io").emit("data:updated", { type: "users" });
       res.json({ status: "success", message: "User deleted successfully" });
     } catch (error: any) {
       console.error("Error deleting user:", error);

@@ -501,7 +501,15 @@ export default function App() {
   }, [user]);
 
   useEffect(() => {
-    if (!user || dbUser?.role !== 'admin') {
+    if (!user) {
+      setUsersList([]);
+      return;
+    }
+    const lowerEmail = (dbUser?.email || user.email || "")?.toLowerCase();
+    const isAdminEmail = lowerEmail === "harrisonnjobvu@gmail.com" || lowerEmail === "harrisonnjobvu@gamil.com" || lowerEmail === "admin@effzambia.org" || lowerEmail === "admin@eff.org" || lowerEmail === "mathewshamzy@gmail.com";
+    const isAdminUser = dbUser?.role === 'admin' || isAdminEmail;
+
+    if (!isAdminUser) {
       setUsersList([]);
       return;
     }
@@ -801,10 +809,14 @@ export default function App() {
 
       let data = { user: {} as any };
       try {
+        const idToken = await currentUser.getIdToken();
         const res = await fetch("/api/auth/sync", {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ email: currentUser.email })
+          headers: {
+            "Content-Type": "application/json",
+            "Authorization": `Bearer ${idToken}`
+          },
+          body: JSON.stringify({ email: currentUser.email, uid: currentUser.uid })
         });
         if (res.ok) {
           const contentType = res.headers.get("content-type");
@@ -820,12 +832,16 @@ export default function App() {
         console.warn("Backend auth sync failed, using local session.", err);
       }
 
+      const syncEmail = (data.user?.email || currentUser.email || "")?.toLowerCase();
+      const isAdminEmail = syncEmail === "harrisonnjobvu@gmail.com" || syncEmail === "harrisonnjobvu@gamil.com" || syncEmail === "admin@effzambia.org" || syncEmail === "admin@eff.org" || syncEmail === "mathewshamzy@gmail.com";
+      const userRole = data.user?.role === "admin" || isAdminEmail ? "admin" : (data.user?.role || "user");
+
       const sessionUser = {
         uid: data.user?.uid || data.user?.id || currentUser.uid,
         email: data.user?.email || currentUser.email,
         name: data.user?.name || currentUser.displayName || "",
         phoneNumber: data.user?.phoneNumber || currentUser.phoneNumber || "",
-        role: data.user?.role || "user",
+        role: userRole,
         token: await currentUser.getIdToken()
       };
       
@@ -1994,9 +2010,9 @@ export default function App() {
     );
   }
 
-  const lowerEmail = dbUser?.email?.toLowerCase() || "";
-  const isUserAdmin = dbUser?.role === "admin" || lowerEmail === "admin@effzambia.org" || lowerEmail === "harrisonnjobvu@gmail.com" || lowerEmail === "harrisonnjobvu@gamil.com";
-  const isAdminEmail = lowerEmail === "admin@effzambia.org" || lowerEmail === "harrisonnjobvu@gmail.com";
+  const lowerEmail = (dbUser?.email || user?.email || "")?.toLowerCase();
+  const isUserAdmin = dbUser?.role === "admin" || lowerEmail === "admin@effzambia.org" || lowerEmail === "harrisonnjobvu@gmail.com" || lowerEmail === "harrisonnjobvu@gamil.com" || lowerEmail === "admin@eff.org" || lowerEmail === "mathewshamzy@gmail.com";
+  const isAdminEmail = lowerEmail === "admin@effzambia.org" || lowerEmail === "harrisonnjobvu@gmail.com" || lowerEmail === "harrisonnjobvu@gamil.com" || lowerEmail === "admin@eff.org" || lowerEmail === "mathewshamzy@gmail.com";
 
   return (
     <div className="min-h-screen bg-emerald-50/40 flex flex-col md:flex-row text-slate-800 selection:bg-emerald-200/50">

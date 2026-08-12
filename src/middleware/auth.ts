@@ -1,6 +1,7 @@
 import { Request, Response, NextFunction } from 'express';
 import crypto from 'crypto';
 import { adminAuth } from '../lib/firebase-admin.ts';
+import { getUserByUid } from '../db/adapters.ts';
 
 const JWT_SECRET = process.env.JWT_SECRET || 'eff-fleet-maintenance-system-secret-2026';
 
@@ -46,18 +47,31 @@ export const requireAuth = async (
   const token = authHeader.split('Bearer ')[1];
   const parts = token.split('.');
   
-    if (parts.length === 3) {
+  if (parts.length === 3) {
     // Try to verify using standard JWT (Firebase)
     try {
       const decodedToken = await adminAuth.verifyIdToken(token);
       if (decodedToken) {
         const lowerEmail = decodedToken.email?.toLowerCase() || '';
-        const isAdminEmail = lowerEmail === "harrisonnjobvu@gmail.com" || lowerEmail === "harrisonnjobvu@gamil.com" || lowerEmail === "admin@effzambia.org" || lowerEmail === "admin@eff.org";
+        const isAdminEmail = lowerEmail === "harrisonnjobvu@gmail.com" || lowerEmail === "harrisonnjobvu@gamil.com" || lowerEmail === "admin@effzambia.org" || lowerEmail === "admin@eff.org" || lowerEmail === "mathewshamzy@gmail.com";
+        
+        let role = isAdminEmail ? "admin" : "user";
+        if (!isAdminEmail) {
+          try {
+            const dbUser = await getUserByUid(decodedToken.uid);
+            if (dbUser && dbUser.role === "admin") {
+              role = "admin";
+            }
+          } catch (e) {
+            // ignore
+          }
+        }
+
         req.user = {
           uid: decodedToken.uid,
           email: decodedToken.email,
           name: decodedToken.name || '',
-          role: isAdminEmail ? "admin" : "user",
+          role,
           phone_number: decodedToken.phone_number || ''
         };
         return next();
@@ -69,11 +83,13 @@ export const requireAuth = async (
     // Check custom cryptographic token (2 segments: payload.signature)
     const payload = verifyCustomToken(token);
     if (payload) {
+      const lowerEmail = payload.email?.toLowerCase() || '';
+      const isAdminEmail = lowerEmail === "harrisonnjobvu@gmail.com" || lowerEmail === "harrisonnjobvu@gamil.com" || lowerEmail === "admin@effzambia.org" || lowerEmail === "admin@eff.org" || lowerEmail === "mathewshamzy@gmail.com";
       req.user = {
         uid: payload.uid,
         email: payload.email,
         name: payload.name,
-        role: payload.role,
+        role: (isAdminEmail || payload.role === "admin") ? "admin" : payload.role || "user",
         phone_number: payload.phoneNumber || ''
       };
       return next();
