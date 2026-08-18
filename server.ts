@@ -114,6 +114,7 @@ async function ensureDatabaseSchema() {
         id SERIAL PRIMARY KEY,
         name TEXT NOT NULL UNIQUE,
         quantity INTEGER NOT NULL,
+        unit_price INTEGER DEFAULT 0 NOT NULL,
         date_added TEXT NOT NULL,
         added_by TEXT NOT NULL,
         created_at TIMESTAMP DEFAULT NOW()
@@ -145,6 +146,7 @@ async function ensureDatabaseSchema() {
         spare_id INTEGER REFERENCES spares_inventory(id) ON DELETE SET NULL,
         spare_name TEXT NOT NULL,
         quantity INTEGER NOT NULL,
+        price_at_time INTEGER DEFAULT 0 NOT NULL,
         created_at TIMESTAMP DEFAULT NOW()
       );
     `);
@@ -176,12 +178,14 @@ async function ensureDatabaseSchema() {
       { table: "bikes", column: "created_at", type: "TIMESTAMP DEFAULT CURRENT_TIMESTAMP" },
       { table: "spares_inventory", column: "date_added", type: "TEXT NOT NULL DEFAULT ''" },
       { table: "spares_inventory", column: "added_by", type: "TEXT NOT NULL DEFAULT 'admin'" },
+      { table: "spares_inventory", column: "unit_price", type: "INTEGER DEFAULT 0 NOT NULL" },
       { table: "spares_inventory", column: "created_at", type: "TIMESTAMP DEFAULT CURRENT_TIMESTAMP" },
       { table: "service_logs", column: "next_service_date", type: "TEXT" },
       { table: "service_logs", column: "next_service_mileage", type: "INTEGER" },
       { table: "service_logs", column: "work_done", type: "TEXT" },
       { table: "service_logs", column: "work_pending", type: "TEXT" },
       { table: "service_logs", column: "created_at", type: "TIMESTAMP DEFAULT CURRENT_TIMESTAMP" },
+      { table: "service_log_spares", column: "price_at_time", type: "INTEGER DEFAULT 0 NOT NULL" },
       { table: "service_requests", column: "bike_reg", type: "TEXT NOT NULL DEFAULT 'Unknown'" },
       { table: "service_requests", column: "status", type: "TEXT DEFAULT 'pending' NOT NULL" },
       { table: "service_requests", column: "date_requested", type: "TEXT NOT NULL DEFAULT ''" },
@@ -519,7 +523,7 @@ async function startServer() {
 
   app.post("/api/spares", requireAuth, requireAdmin, async (req: AuthRequest, res) => {
     try {
-      const { name, quantity, dateAdded } = req.body;
+      const { name, quantity, unitPrice, dateAdded } = req.body;
       const addedBy = req.user?.name || req.user?.email || "Admin";
 
       if (!name || quantity === undefined || !dateAdded) {
@@ -537,6 +541,7 @@ async function startServer() {
       const newSpare = await createSpare({
         name: formattedName,
         quantity: parseInt(quantity),
+        unitPrice: parseFloat(unitPrice) || 0,
         dateAdded,
         addedBy,
       });
@@ -552,7 +557,7 @@ async function startServer() {
   app.put("/api/spares/:id", requireAuth, requireAdmin, async (req: AuthRequest, res) => {
     try {
       const spareId = parseInt(req.params.id);
-      const { name, quantity, dateAdded } = req.body;
+      const { name, quantity, unitPrice, dateAdded } = req.body;
       const addedBy = req.user?.name || req.user?.email || "Admin";
 
       const formattedName = name?.trim();
@@ -567,6 +572,7 @@ async function startServer() {
       const updatedSpare = await updateSpare(spareId, {
         name: formattedName,
         quantity: quantity !== undefined ? parseInt(quantity) : undefined,
+        unitPrice: unitPrice !== undefined ? parseFloat(unitPrice) : undefined,
         dateAdded,
         addedBy,
       });

@@ -2273,7 +2273,7 @@ export default function App() {
             {activeTab === "spares" && (
               <button
                 onClick={() => openSpareModal()}
-                id="btn-add-spare"
+                id="btn-add-spare-header"
                 className="bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded-xl text-xs font-bold flex items-center gap-1.5 shadow-sm transition-all duration-300 cursor-pointer"
               >
                 <Plus className="w-4 h-4" /> Add Spare Stock
@@ -3245,10 +3245,11 @@ export default function App() {
                 </div>
                 <button
                   onClick={() => openSpareModal()}
+                  id="btn-provision-new-stock"
                   className="bg-blue-600 hover:bg-blue-700 text-white px-6 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-[0.2em] shadow-[0_0_20px_rgba(37,99,235,0.3)] transition-all cursor-pointer flex items-center gap-2 group"
                 >
                   <Plus className="w-4 h-4 group-hover:rotate-90 transition-transform" />
-                  Provision New Stock
+                  Add New Stock Part
                 </button>
               </div>
 
@@ -3259,6 +3260,7 @@ export default function App() {
                   <p className="text-[10px] text-slate-600 mt-2 font-bold uppercase tracking-widest max-w-xs mx-auto">Zero resources detected in the primary buffer. Initialize provisioning sequence.</p>
                   <button
                     onClick={() => openSpareModal()}
+                    id="btn-execute-first-provisioning"
                     className="mt-6 bg-slate-800 hover:bg-blue-600 text-slate-400 hover:text-white px-6 py-3 rounded-2xl text-[10px] font-black uppercase tracking-widest transition-all cursor-pointer border border-slate-700/50"
                   >
                     Execute First Provisioning
@@ -3358,10 +3360,11 @@ export default function App() {
                         <div className={`py-3 px-6 text-center border-t transition-all ${isLow ? "bg-rose-50 border-rose-100" : "bg-blue-50 border-blue-100"}`}>
                           <button 
                             onClick={() => openSpareModal(spare)}
+                            id={`btn-stock-injection-${spare.id}`}
                             className={`text-[9px] font-black uppercase tracking-[0.2em] flex items-center justify-center gap-2 mx-auto transition-colors ${isLow ? "text-rose-600 hover:text-rose-700" : "text-blue-600 hover:text-blue-700"}`}
                           >
                             <RefreshCw className="w-3 h-3" />
-                            Initiate Stock Injection
+                            Update Stock Level
                           </button>
                         </div>
                       </motion.div>
@@ -3760,6 +3763,7 @@ export default function App() {
                 </button>
                 <button
                   type="submit"
+                  id="btn-save-spare-stock"
                   className="bg-blue-600 hover:bg-blue-700 text-white px-5 py-2.5 rounded-xl text-xs font-semibold shadow-lg shadow-blue-500/10 cursor-pointer"
                 >
                   {editingSpare ? "Save Changes" : "Add to Stock"}
@@ -4269,6 +4273,7 @@ export default function App() {
                 </button>
                 <button
                   type="submit"
+                  id="btn-submit-service-request"
                   className="bg-blue-600 hover:bg-blue-700 text-white px-5 py-2.5 rounded-xl text-xs font-semibold shadow-lg shadow-blue-500/10 cursor-pointer"
                 >
                   Submit Request
