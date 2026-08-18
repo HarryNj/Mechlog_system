@@ -2222,8 +2222,8 @@ export default function App() {
                       <PieChart>
                         <Pie
                           data={[
-                            { name: 'Completed', value: totalCompleted },
-                            { name: 'Pending', value: totalPending }
+                            { name: 'Completed', value: totalCompleted, color: '#10b981' },
+                            { name: 'Pending', value: totalPending, color: '#f59e0b' }
                           ]}
                           cx="50%"
                           cy="50%"
@@ -2232,8 +2232,8 @@ export default function App() {
                           paddingAngle={5}
                           dataKey="value"
                         >
-                          <Cell fill="#10b981" />
-                          <Cell fill="#f59e0b" />
+                          <Cell key="cell-completed" fill="#10b981" />
+                          <Cell key="cell-pending" fill="#f59e0b" />
                         </Pie>
                         <Tooltip 
                           contentStyle={{ borderRadius: '12px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1)' }}
@@ -2606,8 +2606,8 @@ export default function App() {
                             </div>
                             {log.spares && log.spares.length > 0 && (
                               <div className="flex flex-wrap gap-1 items-center">
-                                {log.spares.map((s) => (
-                                  <span key={s.spareId} className="text-[8px] bg-emerald-500/10 text-emerald-500 border border-emerald-500/20 px-1.5 py-0.5 rounded font-black flex items-center gap-1">
+                                {log.spares.map((s, sIdx) => (
+                                  <span key={`${s.spareId}-${s.spareName}-${sIdx}`} className="text-[8px] bg-emerald-500/10 text-emerald-500 border border-emerald-500/20 px-1.5 py-0.5 rounded font-black flex items-center gap-1">
                                     {s.spareName} ({s.quantity}) {s.priceAtTime > 0 && <span className="opacity-60">• K{s.priceAtTime} ea</span>}
                                   </span>
                                 ))}
@@ -2661,8 +2661,8 @@ export default function App() {
                             </div>
                             {log.spares && log.spares.length > 0 && (
                               <div className="flex flex-wrap gap-1 items-center">
-                                {log.spares.map((s) => (
-                                  <span key={s.spareId} className="text-[8px] bg-amber-500/10 text-amber-500 border border-amber-500/20 px-1.5 py-0.5 rounded font-black">
+                                {log.spares.map((s, sIdx) => (
+                                  <span key={`${s.spareId}-${s.spareName}-${sIdx}`} className="text-[8px] bg-amber-500/10 text-amber-500 border border-amber-500/20 px-1.5 py-0.5 rounded font-black">
                                     {s.spareName} ({s.quantity})
                                   </span>
                                 ))}
@@ -2909,8 +2909,8 @@ export default function App() {
                               <td className="px-6 py-4">
                                 <div className="flex flex-wrap gap-1.5 max-w-xs">
                                   {log.spares && log.spares.length > 0 ? (
-                                    log.spares.map(s => (
-                                      <span key={s.spareId} className="text-[10px] bg-indigo-50 text-indigo-600 px-2 py-0.5 rounded-md font-semibold">
+                                    log.spares.map((s, sIdx) => (
+                                      <span key={`${s.spareId}-${s.spareName}-${sIdx}`} className="text-[10px] bg-indigo-50 text-indigo-600 px-2 py-0.5 rounded-md font-semibold">
                                         {s.spareName} ({s.quantity}) {s.priceAtTime > 0 && `• K${s.priceAtTime}`}
                                       </span>
                                     ))
