@@ -157,7 +157,7 @@ interface SpareInventoryType {
 interface LogSpareType {
   id: number;
   serviceLogId: number;
-  spareId: number | null;
+  spareId: number | string | null;
   spareName: string;
   quantity: number;
   priceAtTime: number;
@@ -555,7 +555,7 @@ export default function App() {
     workPending: "",
     comment: "",
     status: "pending",
-    sparesUsed: [] as { spareId: string; spareName: string; quantity: number }[]
+    sparesUsed: [] as { spareId: string; spareName: string; quantity: number; priceAtTime: number }[]
   });
 
   const [fetchingAiInsight, setFetchingAiInsight] = useState(false);
@@ -1123,7 +1123,12 @@ export default function App() {
         workPending: log.workPending || "",
         comment: log.comment || "",
         status: log.status,
-        sparesUsed: log.spares ? log.spares.map(s => ({ spareId: String(s.spareId), spareName: s.spareName, quantity: s.quantity })) : []
+        sparesUsed: log.spares ? log.spares.map(s => ({ 
+          spareId: String(s.spareId), 
+          spareName: s.spareName, 
+          quantity: s.quantity,
+          priceAtTime: s.priceAtTime || 0
+        })) : []
       });
     } else {
       setEditingLog(null);
@@ -1140,7 +1145,7 @@ export default function App() {
         workPending: "",
         comment: "",
         status: "pending",
-        sparesUsed: [] as { spareId: string; spareName: string; quantity: number }[]
+        sparesUsed: [] as { spareId: string; spareName: string; quantity: number; priceAtTime: number }[]
       });
     }
     setLogModalOpen(true);
@@ -1181,7 +1186,7 @@ export default function App() {
                 spareId: s.spareId === "new" ? "new" : parseInt(s.spareId), 
                 spareName: s.spareName || spareInfo?.name || `Spare ID ${s.spareId}`,
                 quantity: s.quantity,
-                priceAtTime: spareInfo?.unitPrice || 0
+                priceAtTime: s.priceAtTime || spareInfo?.unitPrice || 0
               };
             })
           });
@@ -1194,7 +1199,7 @@ export default function App() {
             spareId: s.spareId === "new" ? "new" : parseInt(s.spareId), 
             spareName: s.spareName || spareInfo?.name || `Spare ID ${s.spareId}`,
             quantity: s.quantity,
-            priceAtTime: spareInfo?.unitPrice || 0
+            priceAtTime: s.priceAtTime || spareInfo?.unitPrice || 0
           };
         });
 
@@ -1280,7 +1285,7 @@ export default function App() {
   const addSpareField = () => {
     setLogForm(prev => ({
       ...prev,
-      sparesUsed: [...prev.sparesUsed, { spareId: "", spareName: "", quantity: 1 }]
+      sparesUsed: [...prev.sparesUsed, { spareId: "", spareName: "", quantity: 1, priceAtTime: 0 }]
     }));
   };
 
@@ -1291,23 +1296,26 @@ export default function App() {
     }));
   };
 
-  const updateSpareField = (index: number, field: "spareId" | "spareName" | "quantity", value: string | number) => {
+  const updateSpareField = (index: number, field: "spareId" | "spareName" | "quantity" | "priceAtTime", value: string | number) => {
     setLogForm(prev => {
       const updated = [...prev.sparesUsed];
       if (field === "spareId") {
         const id = String(value);
         if (id === "new") {
-          updated[index] = { ...updated[index], spareId: "new", spareName: "" };
+          updated[index] = { ...updated[index], spareId: "new", spareName: "", priceAtTime: 0 };
         } else {
           const matched = sparesList.find(s => String(s.id) === id);
           updated[index] = { 
             ...updated[index], 
             spareId: id, 
-            spareName: matched ? matched.name : (id === "" ? "" : updated[index].spareName) 
+            spareName: matched ? matched.name : (id === "" ? "" : updated[index].spareName),
+            priceAtTime: matched ? matched.unitPrice : updated[index].priceAtTime
           };
         }
       } else if (field === "spareName") {
         updated[index] = { ...updated[index], spareName: String(value), spareId: "new" };
+      } else if (field === "priceAtTime") {
+        updated[index] = { ...updated[index], priceAtTime: parseFloat(String(value)) || 0 };
       } else {
         updated[index] = { ...updated[index], quantity: parseInt(String(value)) || 1 };
       }
@@ -1328,10 +1336,19 @@ export default function App() {
   }, 0);
 
   // Total expenditure across all logs
-  const totalExpenditure = logsList.reduce((acc, log) => {
-    if (!log.spares) return acc;
-    return acc + log.spares.reduce((sum, s) => sum + (s.quantity * (s.priceAtTime || 0)), 0);
-  }, 0);
+  const totalExpenditure = useMemo(() => {
+    return logsList.reduce((acc, log) => {
+      if (!log.spares) return acc;
+      return acc + log.spares.reduce((sum, s) => {
+        let price = Number(s.priceAtTime) || 0;
+        if (price === 0 && String(s.spareId) !== "new" && s.spareId !== null) {
+          const currentSpare = sparesList.find(sl => String(sl.id) === String(s.spareId));
+          price = Number(currentSpare?.unitPrice) || 0;
+        }
+        return sum + (Number(s.quantity) * price);
+      }, 0);
+    }, 0);
+  }, [logsList, sparesList]);
 
   // Monthly expenditure trends
   const monthlyExpenditure = useMemo(() => {
@@ -1341,7 +1358,14 @@ export default function App() {
       const dateObj = new Date(log.date);
       const monthYear = dateObj.toLocaleDateString('en-US', { month: 'short', year: '2-digit' });
       
-      const logCost = log.spares ? log.spares.reduce((sum, s) => sum + (s.quantity * (s.priceAtTime || 0)), 0) : 0;
+      const logCost = log.spares ? log.spares.reduce((sum, s) => {
+        let price = Number(s.priceAtTime) || 0;
+        if (price === 0 && String(s.spareId) !== "new" && s.spareId !== null) {
+          const currentSpare = sparesList.find(sl => String(sl.id) === String(s.spareId));
+          price = Number(currentSpare?.unitPrice) || 0;
+        }
+        return sum + (Number(s.quantity) * price);
+      }, 0) : 0;
       
       if (!monthlyData[monthYear]) {
         monthlyData[monthYear] = 0;
@@ -1373,11 +1397,18 @@ export default function App() {
     log.spares.forEach(s => {
       let name = s.spareName;
       if (!name || name === "undefined" || name === "null") {
-        const spareInfo = sparesList.find(sl => sl.id === s.spareId);
+        const spareInfo = sparesList.find(sl => String(sl.id) === String(s.spareId));
         name = spareInfo?.name || `Spare ID ${s.spareId || '?'}`;
       }
-      sparesUsedBreakdown[name] = (sparesUsedBreakdown[name] || 0) + s.quantity;
-      sparesExpenditureBreakdown[name] = (sparesExpenditureBreakdown[name] || 0) + (s.quantity * (s.priceAtTime || 0));
+
+      let price = Number(s.priceAtTime) || 0;
+      if (price === 0 && String(s.spareId) !== "new" && s.spareId !== null) {
+        const spareInfo = sparesList.find(sl => String(sl.id) === String(s.spareId));
+        price = Number(spareInfo?.unitPrice) || 0;
+      }
+
+      sparesUsedBreakdown[name] = (sparesUsedBreakdown[name] || 0) + Number(s.quantity);
+      sparesExpenditureBreakdown[name] = (sparesExpenditureBreakdown[name] || 0) + (Number(s.quantity) * price);
     });
   });
 
@@ -2167,7 +2198,8 @@ export default function App() {
                 <motion.div 
                   initial={{ opacity: 0, y: 20 }}
                   animate={{ opacity: 1, y: 0 }}
-                  transition={{ delay: 0.5 }}
+                  key={`expenditure-${totalExpenditure}`} // Force re-animation on value change for feedback
+                  transition={{ type: "spring", stiffness: 300, damping: 25 }}
                   className="bg-white p-6 rounded-2xl border border-emerald-500/10 shadow-sm flex items-center gap-4 hover:border-emerald-500/30 transition-colors group"
                 >
                   <div className="p-3.5 bg-blue-50 text-blue-600 rounded-xl group-hover:scale-110 transition-transform shadow-sm">
@@ -2175,9 +2207,15 @@ export default function App() {
                   </div>
                   <div>
                     <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Total Expenditure</p>
-                    <h3 className="text-2xl font-black text-slate-800 mt-0.5 tracking-tight">
-                      <span className="text-sm font-bold mr-1 italic">K</span>
-                      {totalExpenditure.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                    <h3 className="text-2xl font-black text-slate-800 mt-0.5 tracking-tight flex items-baseline">
+                      <span className="text-sm font-bold mr-1 italic text-blue-600">K</span>
+                      <motion.span
+                        initial={{ opacity: 0.5 }}
+                        animate={{ opacity: 1 }}
+                        transition={{ duration: 0.5 }}
+                      >
+                        {totalExpenditure.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                      </motion.span>
                     </h3>
                   </div>
                 </motion.div>
@@ -3928,11 +3966,20 @@ export default function App() {
               {/* Multiple Spares Selection */}
               <div className="pt-4 border-t border-slate-100">
                 <div className="flex justify-between items-center mb-3">
-                  <h4 className="text-sm font-bold text-slate-800">Spares Installed on This Service</h4>
+                  <div className="space-y-0.5">
+                    <h4 className="text-sm font-bold text-slate-800">Spares Installed on This Service</h4>
+                    {logForm.sparesUsed.length > 0 && (
+                      <p className="text-[10px] text-blue-600 font-bold uppercase tracking-wider">
+                        Subtotal: K{logForm.sparesUsed.reduce((sum, s) => {
+                          return sum + (Number(s.quantity) * Number(s.priceAtTime));
+                        }, 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                      </p>
+                    )}
+                  </div>
                   <button
                     type="button"
                     onClick={addSpareField}
-                    className="text-xs font-bold text-blue-600 hover:text-blue-700 flex items-center gap-1 cursor-pointer"
+                    className="text-xs font-bold text-blue-600 hover:text-blue-700 flex items-center gap-1 cursor-pointer bg-blue-50 px-3 py-1.5 rounded-lg transition-colors"
                   >
                     <Plus className="w-3.5 h-3.5" /> Add Spare
                   </button>
@@ -3982,15 +4029,33 @@ export default function App() {
                                 )}
                               </div>
 
-                          {/* Quantity */}
-                          <input
-                            type="number"
-                            required
-                            min="1"
-                            value={item.quantity}
-                            onChange={(e) => updateSpareField(index, "quantity", e.target.value)}
-                            className="w-20 px-3 py-2 rounded-xl border border-slate-200 text-xs focus:ring-2 focus:ring-blue-500 outline-none text-center text-slate-900 font-bold"
-                          />
+                              {/* Price */}
+                              <div className="relative">
+                                <span className="absolute left-2 top-1/2 -translate-y-1/2 text-[10px] font-bold text-slate-400 italic">K</span>
+                                <input
+                                  type="number"
+                                  required
+                                  min="0"
+                                  step="0.01"
+                                  placeholder="Price"
+                                  value={item.priceAtTime}
+                                  onChange={(e) => updateSpareField(index, "priceAtTime", e.target.value)}
+                                  className="w-24 pl-5 pr-2 py-2 rounded-xl border border-slate-200 text-xs focus:ring-2 focus:ring-blue-500 outline-none text-slate-900 font-bold bg-slate-50/50"
+                                />
+                              </div>
+
+                              {/* Quantity */}
+                              <div className="relative">
+                                <input
+                                  type="number"
+                                  required
+                                  min="1"
+                                  value={item.quantity}
+                                  onChange={(e) => updateSpareField(index, "quantity", e.target.value)}
+                                  className="w-16 px-2 py-2 rounded-xl border border-slate-200 text-xs focus:ring-2 focus:ring-blue-500 outline-none text-center text-slate-900 font-bold"
+                                />
+                                <span className="absolute -top-2 left-1/2 -translate-x-1/2 bg-white px-1 text-[8px] font-black text-slate-400 uppercase tracking-tighter">Qty</span>
+                              </div>
 
                           {/* Delete Action */}
                           <button
