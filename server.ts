@@ -840,17 +840,40 @@ async function startServer() {
         Keep it concise and actionable for a workshop manager.
       `;
 
-      const result = await ai.models.generateContent({
-        model: "gemini-3.7-flash",
-        contents: prompt,
-      });
+      // Retry mechanism for 503 errors
+      let result;
+      let retries = 0;
+      const maxRetries = 3;
+      while (retries < maxRetries) {
+        try {
+          result = await ai.models.generateContent({
+            model: "gemini-3.7-flash",
+            contents: prompt,
+          });
+          break;
+        } catch (error: any) {
+          retries++;
+          const isRetryable = error.status === 503 || error.code === 503 || error.message?.includes("503") || error.message?.includes("high demand") || error.message?.includes("UNAVAILABLE");
+          if (isRetryable && retries < maxRetries) {
+            const delay = 1000 * Math.pow(2, retries - 1);
+            console.warn(`Gemini API high demand (503), retrying in ${delay}ms... (Attempt ${retries}/${maxRetries})`);
+            await new Promise(resolve => setTimeout(resolve, delay));
+            continue;
+          }
+          throw error;
+        }
+      }
+
+      if (!result) {
+        throw new Error("Failed to get response from AI");
+      }
 
       const text = result.text;
 
       res.json({ insight: text });
     } catch (error: any) {
       console.error("AI Insight Error:", error);
-      res.status(500).json({ error: "Failed to generate AI insight", details: error.message });
+      res.status(500).json({ error: "The AI service is currently experiencing high demand. Please try again in a few moments.", details: error.message });
     }
   });
 
