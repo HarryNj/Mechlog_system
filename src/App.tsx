@@ -908,7 +908,7 @@ export default function App() {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          "Authorization": `Bearer ${user?.token || ""}`
+          "Authorization": `Bearer ${(user as any)?.token || ""}`
         },
         body: JSON.stringify({ bikeReg: targetReg, logs: targetLogs })
       });
@@ -2554,7 +2554,7 @@ export default function App() {
                               >
                                 <td className="py-4 px-4 rounded-l-xl border-y border-l border-emerald-500/5">
                                   <div className="font-black text-slate-800 text-lg tracking-tight group-hover:text-emerald-700 transition-colors">{bike.regNo}</div>
-                                  <div className="text-[10px] text-slate-500 font-bold uppercase tracking-wider">{bike.makeModel || "Generic Unit"}</div>
+                                  <div className="text-[10px] text-slate-500 font-bold uppercase tracking-wider">{bike.model || "Generic Unit"}</div>
                                 </td>
                                 <td className="py-4 px-4 border-y border-emerald-500/5">
                                   <div className="text-xs text-slate-700 font-bold">{bike.officer}</div>

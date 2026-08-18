@@ -821,8 +821,14 @@ async function startServer() {
         return res.status(500).json({ error: "AI feature not configured: Missing API Key" });
       }
 
-      const genAI = new GoogleGenAI(apiKey);
-      const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash" });
+      const ai = new GoogleGenAI({
+        apiKey: process.env.GEMINI_API_KEY,
+        httpOptions: {
+          headers: {
+            'User-Agent': 'aistudio-build',
+          }
+        }
+      });
 
       const prompt = `
         As a Fleet Maintenance AI Assistant, analyze the following service history for bike ${bikeReg}.
@@ -834,8 +840,12 @@ async function startServer() {
         Keep it concise and actionable for a workshop manager.
       `;
 
-      const result = await model.generateContent(prompt);
-      const text = result.response.text();
+      const result = await ai.models.generateContent({
+        model: "gemini-3.7-flash",
+        contents: prompt,
+      });
+
+      const text = result.text;
 
       res.json({ insight: text });
     } catch (error: any) {
