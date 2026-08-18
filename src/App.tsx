@@ -3,7 +3,19 @@ import { motion, AnimatePresence } from "motion/react";
 import "react-phone-number-input/style.css";
 import PhoneInput from "react-phone-number-input";
 import { io } from "socket.io-client";
-import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from "recharts";
+import { 
+  LineChart, 
+  Line, 
+  XAxis, 
+  YAxis, 
+  CartesianGrid, 
+  Tooltip, 
+  ResponsiveContainer,
+  PieChart,
+  Pie,
+  Cell,
+  Legend
+} from "recharts";
 import { 
   Plus, 
   Trash2, 
@@ -47,7 +59,23 @@ import {
 import * as XLSX from "xlsx";
 
 import { auth, googleAuthProvider, db } from './lib/firebase.ts';
-import { collection, query, onSnapshot } from 'firebase/firestore';
+import { 
+  collection, 
+  query, 
+  onSnapshot, 
+  doc, 
+  setDoc, 
+  addDoc, 
+  updateDoc, 
+  deleteDoc, 
+  where, 
+  getDocs,
+  orderBy,
+  limit,
+  serverTimestamp,
+  increment,
+  runTransaction
+} from 'firebase/firestore';
 import { signInWithEmailAndPassword, createUserWithEmailAndPassword, updateProfile, sendPasswordResetEmail, signInWithPopup, signOut, onAuthStateChanged } from 'firebase/auth';
 import type { User } from 'firebase/auth';
 
@@ -306,17 +334,20 @@ export default function App() {
   const [authLoading, setAuthLoading] = useState(false);
   
   const [loading, setLoading] = useState(true);
-  const [syncing, setSyncing] = useState(false);
   const [isOnline, setIsOnline] = useState(typeof window !== 'undefined' ? window.navigator.onLine : true);
-  const [lastSynced, setLastSynced] = useState<Date | null>(() => {
-    const stored = localStorage.getItem("lastSynced");
-    return stored ? new Date(stored) : null;
-  });
   const [dbLayer, setDbLayer] = useState<"firestore" | "sql">("firestore");
-  const [offlineQueue, setOfflineQueue] = useState<any[]>(() => {
-    try { return JSON.parse(localStorage.getItem('eff_offline_queue') || '[]'); }
-    catch { return []; }
-  });
+
+  const safeJson = async (res: Response) => {
+    try {
+      const contentType = res.headers.get("content-type");
+      if (contentType && contentType.includes("application/json")) {
+        return await res.clone().json();
+      }
+      return null;
+    } catch {
+      return null;
+    }
+  };
 
   useEffect(() => {
     const fetchDbStatus = async () => {
@@ -335,7 +366,6 @@ export default function App() {
 
     const handleOnline = async () => {
       setIsOnline(true);
-      await processOfflineQueue();
     };
     const handleOffline = () => setIsOnline(false);
     window.addEventListener('online', handleOnline);
@@ -346,75 +376,6 @@ export default function App() {
     };
   }, []);
 
-  const processOfflineQueue = async () => {
-    const queue = JSON.parse(localStorage.getItem('eff_offline_queue') || '[]');
-    if (queue.length === 0) return;
-    
-    setSyncing(true);
-    const newQueue = [];
-    let syncedCount = 0;
-    for (const req of queue) {
-      try {
-        const res = await fetch(req.url, req.options);
-        if (res.ok) {
-          syncedCount++;
-        } else {
-          newQueue.push(req);
-        }
-      } catch (err) {
-        newQueue.push(req);
-      }
-    }
-    
-    localStorage.setItem('eff_offline_queue', JSON.stringify(newQueue));
-    setOfflineQueue(newQueue);
-    if (syncedCount > 0) {
-      fetchData();
-    }
-    setSyncing(false);
-  };
-
-  const safeJson = async (res: Response) => {
-    try {
-      const contentType = res.headers.get("content-type");
-      if (contentType && contentType.includes("application/json")) {
-        return await res.clone().json();
-      }
-      return null;
-    } catch {
-      return null;
-    }
-  };
-
-  const offlineFetch = async (url: string, options: any) => {
-    if (navigator.onLine) {
-      try {
-        const res = await fetch(url, options);
-        if (res.status === 401 || res.status === 403) {
-          // Explicitly handle auth errors - don't queue these, they need login
-          return res;
-        }
-        if (!res.ok) {
-          if (res.status >= 500) {
-            throw new Error("Server Error");
-          }
-        }
-        return res;
-      } catch (err) {
-        console.warn("Network error during fetch, falling back to offline mode:", err);
-      }
-    }
-    
-    // Only queue non-GET requests (mutations)
-    if (options.method && options.method !== 'GET') {
-      const queue = JSON.parse(localStorage.getItem('eff_offline_queue') || '[]');
-      queue.push({ url, options, timestamp: new Date().toISOString() });
-      localStorage.setItem('eff_offline_queue', JSON.stringify(queue));
-      setOfflineQueue(queue);
-    }
-    
-    return { ok: true, json: async () => ({ status: "success", offline: true }) } as any;
-  };
 
   // Local Storage Helpers
   const saveToStorage = (key: string, data: any) => {
@@ -632,186 +593,51 @@ export default function App() {
     return () => unsubscribe();
   }, []);
 
-  // Sync authenticated user to PostgreSQL database
-  // Sync authenticated user to PostgreSQL database
+  // Sync authenticated user to Firestore database
   const syncUser = async (currentUser: User, overrideName?: string, overridePhone?: string) => {
     try {
-      const token = await currentUser.getIdToken();
-      const res = await fetch("/api/auth/sync", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "Authorization": `Bearer ${token}`
-        },
-        body: JSON.stringify({
+      const userRef = doc(db, 'users', currentUser.uid);
+      const userSnap = await getDocs(query(collection(db, 'users'), where('uid', '==', currentUser.uid)));
+      
+      let finalUser;
+      if (userSnap.empty) {
+        const nextId = await getNextId('users');
+        finalUser = {
+          id: nextId,
           uid: currentUser.uid,
-          name: overrideName || authName || undefined,
-          phoneNumber: overridePhone || authPhone || undefined,
-          email: currentUser.email
-        })
-      });
-
-      if (res.ok) {
-        const data = await safeJson(res) || {};
-        if (data.status === "success" && data.user) {
-          setDbUser(data.user);
-          saveToStorage("dbUser", data.user);
-          await fetchData(currentUser as any, data.user);
-          return;
+          email: currentUser.email,
+          name: overrideName || currentUser.displayName || authName || "",
+          phoneNumber: overridePhone || currentUser.phoneNumber || authPhone || "",
+          role: "user",
+          status: "active",
+          createdAt: new Date().toISOString()
+        };
+        await setDoc(userRef, finalUser);
+      } else {
+        finalUser = { ...userSnap.docs[0].data(), id: userSnap.docs[0].data().id } as UserDBType;
+        // Optionally update profile if overrides provided
+        if (overrideName || overridePhone) {
+          const updates: any = {};
+          if (overrideName) updates.name = overrideName;
+          if (overridePhone) updates.phoneNumber = overridePhone;
+          await updateDoc(userRef, updates);
+          finalUser = { ...finalUser, ...updates };
         }
       }
-      await fetchData(currentUser as any, null);
+      
+      setDbUser(finalUser);
+      saveToStorage("dbUser", finalUser);
+      localStorage.setItem("eff_user_session", JSON.stringify({ ...finalUser, token: await currentUser.getIdToken() }));
     } catch (err) {
-      console.warn("Backend auth sync not available, using local session.", err);
-      await fetchData(currentUser as any, null);
+      console.error("Error syncing user to Firestore:", err);
     }
   };
 
   const fetchData = async (customUser?: any, syncedDbUser?: any, silent = false) => {
-    if (!customUser && !user) return;
-    const currentUser = customUser || user;
-
-    if (!silent) {
-      setLoading(true);
-      await processOfflineQueue();
-    }
-
-    try {
-      const token = (typeof (user as any)?.getIdToken === "function") ? await (user as any).getIdToken() : "";
-      const headers = { "Authorization": `Bearer ${token}` };
-
-      // Refresh user role
-      let userRes;
-      try {
-        userRes = await fetch("/api/auth/me", { headers });
-      } catch (e) {
-        userRes = { ok: false };
-      }
-
-      let finalDbUser = syncedDbUser;
-      if (userRes && userRes.ok) {
-        const userData = await safeJson(userRes) || {};
-        if (userData.status === "success") {
-          finalDbUser = userData.user;
-          setDbUser(finalDbUser);
-          saveToStorage("dbUser", finalDbUser);
-        }
-      } else {
-        const cachedUser = loadFromStorage("dbUser");
-        if (cachedUser && !Array.isArray(cachedUser)) {
-          finalDbUser = cachedUser;
-          setDbUser(cachedUser);
-        }
-      }
-
-      const lowerEmail = currentUser.email?.toLowerCase() || "";
-      const isAdminEmail = lowerEmail === "harrisonnjobvu@gmail.com" || lowerEmail === "harrisonnjobvu@gamil.com" || lowerEmail === "admin@effzambia.org" || lowerEmail === "admin@eff.org" || lowerEmail === "mathewshamzy@gmail.com";
-      const isAdminUser = finalDbUser?.role === "admin" || isAdminEmail;
-
-      const fetchPromises: Promise<any>[] = [
-        fetch("/api/bikes", { headers }).catch(e => ({ ok: false })),
-        fetch("/api/spares", { headers }).catch(e => ({ ok: false })),
-        fetch("/api/logs", { headers }).catch(e => ({ ok: false })),
-        fetch("/api/requests", { headers }).catch(e => ({ ok: false }))
-      ];
-
-      if (isAdminUser) {
-        fetchPromises.push(fetch("/api/users", { headers }).catch(e => ({ ok: false })));
-      }
-
-      const results = await Promise.all(fetchPromises);
-      
-      // Bikes
-      let freshBikes: any[] = [];
-      if (results[0] && results[0].ok) {
-        freshBikes = await safeJson(results[0]) || [];
-        setBikesList(freshBikes);
-        saveToStorage("bikes", freshBikes);
-      } else {
-        freshBikes = loadFromStorage("bikes") || [];
-        setBikesList(freshBikes);
-      }
-
-      // Spares
-      let freshSpares: any[] = [];
-      if (results[1] && results[1].ok) {
-        freshSpares = await safeJson(results[1]) || [];
-        setSparesList(freshSpares);
-        saveToStorage("spares", freshSpares);
-      } else {
-        freshSpares = loadFromStorage("spares") || [];
-        setSparesList(freshSpares);
-      }
-
-      // Logs
-      if (results[2] && results[2].ok) {
-        const data = await safeJson(results[2]) || [];
-        const mappedLogs = data.map((l: any) => {
-          const bikeInfo = l.bike || freshBikes.find((b: any) => String(b.id) === String(l.bikeId));
-          return {
-            ...l,
-            bikeReg: bikeInfo?.regNo || `Bike #${l.bikeId}`,
-            spares: l.spares?.map((s: any) => {
-              let name = s.spareName;
-              if (!name || name === "undefined" || name === "null") {
-                const spareInfo = freshSpares.find((sp: any) => String(sp.id) === String(s.spareId));
-                name = spareInfo?.name || `Spare ID ${s.spareId}`;
-              }
-              return { ...s, spareName: name };
-            })
-          };
-        });
-        setLogsList(mappedLogs);
-        saveToStorage("logs", mappedLogs);
-      } else {
-        const cachedLogs = loadFromStorage("logs") || [];
-        setLogsList(cachedLogs);
-      }
-
-      // Requests
-      if (results[3] && results[3].ok) {
-        const data = await safeJson(results[3]) || [];
-        setRequestsList(data);
-        saveToStorage("requests", data);
-      } else {
-        setRequestsList(loadFromStorage("requests") || []);
-      }
-
-      // Users
-      if (isAdminUser && results[4] && results[4].ok) {
-        const data = await safeJson(results[4]) || [];
-        setUsersList(data);
-        saveToStorage("users", data);
-      } else if (isAdminUser) {
-        setUsersList(loadFromStorage("users") || []);
-      }
-
-      setLastSynced(new Date());
-      localStorage.setItem("lastSynced", new Date().toISOString());
-
-    } catch (error) {
-      console.error("Error fetching data:", error);
-      // Fallback
-      setBikesList(loadFromStorage("bikes") || []);
-      setSparesList(loadFromStorage("spares") || []);
-      setLogsList(loadFromStorage("logs") || []);
-      setRequestsList(loadFromStorage("requests") || []);
-      setUsersList(loadFromStorage("users") || []);
-    } finally {
-      if (!silent) setLoading(false);
-    }
+    // Legacy sync logic replaced by real-time Firestore listeners
+    return;
   };
 
-  // Automated background polling to sync data dynamically across all devices
-  useEffect(() => {
-    if (!user) return;
-    const interval = setInterval(() => {
-      if (document.visibilityState === "visible" && navigator.onLine) {
-        fetchData(user, dbUser, true);
-      }
-    }, 10000); // Sync silently every 10 seconds
-    return () => clearInterval(interval);
-  }, [user, dbUser]);
 
   // Handle Email/Password Sign-In (Custom Secure Relational DB Login)
   const handleEmailSignIn = async (e: React.FormEvent) => {
@@ -824,61 +650,9 @@ export default function App() {
     setAuthError("");
     setAuthSuccess("");
     try {
-      const userCredential = await signInWithEmailAndPassword(auth, authEmail, authPassword);
-      const currentUser = userCredential.user;
-
-      let data = { user: {} as any };
-      try {
-        const idToken = await currentUser.getIdToken();
-        const res = await fetch("/api/auth/sync", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "Authorization": `Bearer ${idToken}`
-          },
-          body: JSON.stringify({ email: currentUser.email, uid: currentUser.uid })
-        });
-        if (res.ok) {
-          const contentType = res.headers.get("content-type");
-          if (contentType && contentType.includes("application/json")) {
-            data = await safeJson(res) || {};
-          } else {
-            console.warn("Backend auth sync returned non-JSON.");
-          }
-        } else {
-          console.warn("Backend auth sync not available, using local session.");
-        }
-      } catch (err) {
-        console.warn("Backend auth sync failed, using local session.", err);
-      }
-
-      const syncEmail = (data.user?.email || currentUser.email || "")?.toLowerCase();
-      const isAdminEmail = syncEmail === "harrisonnjobvu@gmail.com" || syncEmail === "harrisonnjobvu@gamil.com" || syncEmail === "admin@effzambia.org" || syncEmail === "admin@eff.org" || syncEmail === "mathewshamzy@gmail.com";
-      const userRole = data.user?.role === "admin" || isAdminEmail ? "admin" : (data.user?.role || "user");
-
-      const sessionUser = {
-        uid: data.user?.uid || data.user?.id || currentUser.uid,
-        email: data.user?.email || currentUser.email,
-        name: data.user?.name || currentUser.displayName || "",
-        phoneNumber: data.user?.phoneNumber || currentUser.phoneNumber || "",
-        role: userRole,
-        token: await currentUser.getIdToken()
-      };
-      
-      localStorage.setItem("eff_user_session", JSON.stringify(sessionUser));
-      const customUser = {
-        uid: sessionUser.uid,
-        email: sessionUser.email,
-        displayName: sessionUser.name,
-        name: sessionUser.name,
-        phoneNumber: sessionUser.phoneNumber,
-        token: sessionUser.token,
-        getIdToken: async () => sessionUser.token
-      };
-      setUser(customUser as any);
-      setDbUser(sessionUser as any);
+      await signInWithEmailAndPassword(auth, authEmail, authPassword);
       setAuthSuccess("Signed in successfully!");
-      await fetchData(customUser as any, sessionUser);
+      // Profile sync handled by onAuthStateChanged listener
     } catch (err: any) {
       console.error("Sign-in failed:", err);
       setAuthError(err.message || "Incorrect email or password. Please try again.");
@@ -915,20 +689,63 @@ export default function App() {
     setAuthError("");
     setAuthSuccess("");
     try {
-      await signInWithPopup(auth, googleAuthProvider);
-       
-      // The session will be captured by onAuthStateChange when returning.
+      const result = await signInWithPopup(auth, googleAuthProvider);
+      const user = result.user;
+      
+      // Check if user exists in Firestore, if not create
+      const userRef = doc(db, 'users', user.uid);
+      const userSnap = await getDocs(query(collection(db, 'users'), where('uid', '==', user.uid)));
+      
+      if (userSnap.empty) {
+        // Get next numeric ID for compatibility
+        const nextId = await getNextId('users');
+        await setDoc(userRef, {
+          id: nextId,
+          uid: user.uid,
+          email: user.email,
+          name: user.displayName,
+          phoneNumber: user.phoneNumber,
+          role: 'user',
+          status: 'active',
+          createdAt: new Date().toISOString()
+        });
+      }
+      
+      setAuthSuccess("Signed in with Google successfully!");
     } catch (err: any) {
       console.error("Google Sign-In error:", err);
       setAuthError(err.message || "Google Sign-In failed.");
+    } finally {
       setAuthLoading(false);
+    }
+  };
+
+  // Helper to get next numeric ID in client-side Firestore (using a simple counters collection)
+  const getNextId = async (collectionName: string): Promise<number> => {
+    const counterRef = doc(db, 'counters', collectionName);
+    try {
+      let nextId = 1;
+      await runTransaction(db, async (transaction) => {
+        const counterDoc = await transaction.get(counterRef);
+        if (!counterDoc.exists()) {
+          transaction.set(counterRef, { count: 1 });
+          nextId = 1;
+        } else {
+          nextId = counterDoc.data().count + 1;
+          transaction.update(counterRef, { count: nextId });
+        }
+      });
+      return nextId;
+    } catch (e) {
+      console.error("Counter transaction failed: ", e);
+      // Fallback to timestamp if counter fails
+      return Date.now();
     }
   };
 
   // Handle Email/Password/Name/Phone Register (Custom Secure Relational DB Registration)
   const handleEmailRegister = async (e: React.FormEvent) => {
     e.preventDefault();
-    const finalPhone = authPhone;
     if (!authEmail || !authPassword || !authName || !authPhone) {
       setAuthError("All fields (Name, Email, Phone Number, Password) are required");
       return;
@@ -944,55 +761,9 @@ export default function App() {
       const userCredential = await createUserWithEmailAndPassword(auth, authEmail, authPassword);
       const currentUser = userCredential.user;
       await updateProfile(currentUser, { displayName: authName });
-      // Profile updated via signUp options
-      const token = await currentUser.getIdToken();
-      let data: any = { user: {} };
-      try {
-        const res = await fetch("/api/auth/sync", {
-          method: "POST",
-          headers: { "Content-Type": "application/json", "Authorization": `Bearer ${token}` },
-          body: JSON.stringify({ email: currentUser.email, name: authName, phoneNumber: finalPhone })
-        });
-        if (res.ok) {
-          const contentType = res.headers.get("content-type");
-          if (contentType && contentType.includes("application/json")) {
-            data = await safeJson(res) || {};
-          } else {
-            console.warn("Backend auth sync returned non-JSON.");
-          }
-        } else {
-          console.warn("Backend auth sync not available, using local session.");
-        }
-      } catch (err) {
-        console.warn("Backend auth sync failed, using local session.", err);
-      }
-
-      const sessionUser = {
-        uid: data.user?.uid || data.user?.id || currentUser.uid,
-        email: data.user?.email || currentUser.email,
-        name: data.user?.name || currentUser.displayName || authName || "",
-        phoneNumber: data.user?.phoneNumber || currentUser.phoneNumber || finalPhone || "",
-        role: data.user?.role || "user",
-        token: await currentUser.getIdToken()
-      };
-
-      // Set session persistently in localStorage
-      localStorage.setItem("eff_user_session", JSON.stringify(sessionUser));
-
-      const customUser = {
-        uid: sessionUser.uid,
-        email: sessionUser.email,
-        displayName: sessionUser.name,
-        name: sessionUser.name,
-        phoneNumber: sessionUser.phoneNumber,
-        token: sessionUser.token,
-        getIdToken: async () => sessionUser.token
-      };
-
-      setUser(customUser as any);
-      setDbUser(sessionUser);
+      
+      await syncUser(currentUser, authName, authPhone);
       setAuthSuccess("Account created successfully!");
-      await fetchData(customUser as any, sessionUser);
     } catch (err: any) {
       console.error("Registration failed:", err);
       setAuthError(err.message || "Failed to create account. Please try again.");
@@ -1033,50 +804,40 @@ export default function App() {
     e.preventDefault();
     if (!user) return;
 
-    const token = (typeof (user as any)?.getIdToken === "function") ? await (user as any).getIdToken() : "";
-    const url = editingUser ? `/api/users/${editingUser.id}` : "/api/users";
-    const method = editingUser ? "PUT" : "POST";
-
     try {
-      const res = await offlineFetch(url, { method,
-        headers: {
-          "Content-Type": "application/json",
-          "Authorization": `Bearer ${token}`
-        },
-        body: JSON.stringify(userForm)
-      });
-
-      if (!res.ok) {
-        const errData = await safeJson(res) || {};
-        alert(errData.error || "Failed to save user");
-        return;
+      if (editingUser) {
+        const q = query(collection(db, 'users'), where('id', '==', editingUser.id));
+        const snap = await getDocs(q);
+        if (!snap.empty) {
+          const docRef = doc(db, 'users', snap.docs[0].id);
+          await updateDoc(docRef, userForm);
+        }
+      } else {
+        const nextId = await getNextId('users');
+        await addDoc(collection(db, 'users'), {
+          ...userForm,
+          id: nextId,
+          uid: "", // New users via admin don't have a UID yet until they sign in
+          createdAt: new Date().toISOString()
+        });
       }
 
-      await fetchData();
       setUserModalOpen(false);
     } catch (err) {
       console.error("Error saving user:", err);
+      alert("Failed to save user account");
     }
   };
 
   const handleDeleteUser = async (userId: number) => {
     if (!user) return;
-
+    if (!confirm("Are you sure you want to remove this user's access?")) return;
     try {
-      const token = (typeof (user as any)?.getIdToken === "function") ? await (user as any).getIdToken() : "";
-      const res = await offlineFetch(`/api/users/${userId}`, { method: "DELETE",
-        headers: {
-          "Authorization": `Bearer ${token}`
-        }
-      });
-
-      if (!res.ok) {
-        const errData = await safeJson(res) || {};
-        alert(errData.error || "Failed to delete user");
-        return;
+      const q = query(collection(db, 'users'), where('id', '==', userId));
+      const snap = await getDocs(q);
+      if (!snap.empty) {
+        await deleteDoc(doc(db, 'users', snap.docs[0].id));
       }
-
-      await fetchData();
     } catch (err) {
       console.error("Error deleting user:", err);
     }
@@ -1094,57 +855,37 @@ export default function App() {
     e.preventDefault();
     if (!user) return;
 
-    const token = (typeof (user as any)?.getIdToken === "function") ? await (user as any).getIdToken() : "";
     const matchingBike = bikesList.find(b => String(b.id) === String(requestForm.bikeId));
     
     try {
-      const res = await offlineFetch("/api/requests", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "Authorization": `Bearer ${token}`
-        },
-        body: JSON.stringify({
-          ...requestForm,
-          bikeId: parseInt(requestForm.bikeId),
-          bikeReg: matchingBike?.regNo || "Unknown",
-          requestedBy: user.displayName || user.email,
-          status: "pending",
-          dateRequested: new Date().toISOString().split("T")[0]
-        })
+      const nextId = await getNextId('service_requests');
+      await addDoc(collection(db, 'service_requests'), {
+        ...requestForm,
+        id: nextId,
+        bikeId: parseInt(requestForm.bikeId),
+        bikeReg: matchingBike?.regNo || "Unknown",
+        requestedBy: user.displayName || user.email,
+        status: "pending",
+        dateRequested: new Date().toISOString().split("T")[0],
+        createdAt: new Date().toISOString()
       });
 
-      if (!res.ok) {
-        const errData = await safeJson(res) || {};
-        alert(errData.error || "Failed to submit request");
-        return;
-      }
-
-      await fetchData();
       setRequestModalOpen(false);
     } catch (err) {
       console.error("Error saving request:", err);
+      alert("Failed to submit service request");
     }
   };
 
   const handleDeleteRequest = async (requestId: number) => {
     if (!user) return;
-
+    if (!confirm("Are you sure you want to cancel this service request?")) return;
     try {
-      const token = (typeof (user as any)?.getIdToken === "function") ? await (user as any).getIdToken() : "";
-      const res = await offlineFetch(`/api/requests/${requestId}`, { method: "DELETE",
-        headers: {
-          "Authorization": `Bearer ${token}`
-        }
-      });
-
-      if (!res.ok) {
-        const errData = await safeJson(res) || {};
-        alert(errData.error || "Failed to delete request");
-        return;
+      const q = query(collection(db, 'service_requests'), where('id', '==', requestId));
+      const snap = await getDocs(q);
+      if (!snap.empty) {
+        await deleteDoc(doc(db, 'service_requests', snap.docs[0].id));
       }
-
-      await fetchData();
     } catch (err) {
       console.error("Error deleting request:", err);
     }
@@ -1153,16 +894,13 @@ export default function App() {
   const handleAttendRequest = async (reqObj: ServiceRequestType) => {
     if (!user) return;
     
-    // Set request status to "done" in database first
-    const token = (typeof (user as any)?.getIdToken === "function") ? await (user as any).getIdToken() : "";
     try {
-      await offlineFetch(`/api/requests/${reqObj.id}`, { method: "PUT",
-        headers: {
-          "Content-Type": "application/json",
-          "Authorization": `Bearer ${token}`
-        },
-        body: JSON.stringify({ status: "done" })
-      });
+      // Update request status to "done" in Firestore
+      const q = query(collection(db, 'service_requests'), where('id', '==', reqObj.id));
+      const snap = await getDocs(q);
+      if (!snap.empty) {
+        await updateDoc(doc(db, 'service_requests', snap.docs[0].id), { status: "done" });
+      }
       
       // Pre-fill the service log creation modal form
       const matchingBike = bikesList.find(b => b.id === reqObj.bikeId);
@@ -1184,7 +922,6 @@ export default function App() {
         sparesUsed: []
       });
       
-      await fetchData();
       setLogModalOpen(true);
     } catch (err) {
       console.error("Error attending service request:", err);
@@ -1213,29 +950,28 @@ export default function App() {
     e.preventDefault();
     if (!user) return;
 
-    const token = (typeof (user as any)?.getIdToken === "function") ? await (user as any).getIdToken() : "";
-    const url = editingBike ? `/api/bikes/${editingBike.id}` : "/api/bikes";
-    const method = editingBike ? "PUT" : "POST";
-
     try {
-      const res = await offlineFetch(url, { method,
-        headers: {
-          "Content-Type": "application/json",
-          "Authorization": `Bearer ${token}`
-        },
-        body: JSON.stringify({
+      if (editingBike) {
+        // Update in Firestore
+        // We need to find the document with the matching 'id' field, or use the doc ID if it was stored
+        const q = query(collection(db, 'bikes'), where('id', '==', editingBike.id));
+        const snap = await getDocs(q);
+        if (!snap.empty) {
+          const docRef = doc(db, 'bikes', snap.docs[0].id);
+          await updateDoc(docRef, {
+            ...bikeForm
+          });
+        }
+      } else {
+        // Create in Firestore
+        const nextId = await getNextId('bikes');
+        await addDoc(collection(db, 'bikes'), {
           ...bikeForm,
-          dateAdded: editingBike ? editingBike.dateAdded : new Date().toISOString().split("T")[0]
-        })
-      });
-
-      if (!res.ok) {
-        const errorData = await safeJson(res) || {};
-        alert(errorData.error || "Failed to save bike");
-        return;
+          id: nextId,
+          dateAdded: new Date().toISOString().split("T")[0]
+        });
       }
 
-      await fetchData();
       setBikeModalOpen(false);
     } catch (err: any) {
       console.error("Error saving bike:", err);
@@ -1245,12 +981,13 @@ export default function App() {
 
   const handleDeleteBike = async (id: number) => {
     if (!user) return;
+    if (!confirm("Are you sure you want to decommission this bike from the registry?")) return;
     try {
-      const token = (typeof (user as any)?.getIdToken === "function") ? await (user as any).getIdToken() : "";
-      await offlineFetch(`/api/bikes/${id}`, { method: "DELETE",
-        headers: { "Authorization": `Bearer ${token}` }
-      });
-      await fetchData();
+      const q = query(collection(db, 'bikes'), where('id', '==', id));
+      const snap = await getDocs(q);
+      if (!snap.empty) {
+        await deleteDoc(doc(db, 'bikes', snap.docs[0].id));
+      }
     } catch (err) {
       console.error("Error deleting bike:", err);
     }
@@ -1292,43 +1029,42 @@ export default function App() {
       }
     }
 
-    const token = (typeof (user as any)?.getIdToken === "function") ? await (user as any).getIdToken() : "";
-    const url = editingSpare ? `/api/spares/${editingSpare.id}` : "/api/spares";
-    const method = editingSpare ? "PUT" : "POST";
-
     try {
-      const res = await offlineFetch(url, { method,
-        headers: {
-          "Content-Type": "application/json",
-          "Authorization": `Bearer ${token}`
-        },
-        body: JSON.stringify({
+      if (editingSpare) {
+        const q = query(collection(db, 'spares'), where('id', '==', editingSpare.id));
+        const snap = await getDocs(q);
+        if (!snap.empty) {
+          const docRef = doc(db, 'spares', snap.docs[0].id);
+          await updateDoc(docRef, {
+            ...spareForm
+          });
+        }
+      } else {
+        const nextId = await getNextId('spares');
+        await addDoc(collection(db, 'spares'), {
           ...spareForm,
-          addedBy: user.displayName || user.email
-        })
-      });
-
-      if (!res.ok) {
-        const errorData = await safeJson(res) || {};
-        alert(errorData.error || "Failed to save spare");
-        return;
+          id: nextId,
+          addedBy: user.displayName || user.email,
+          dateAdded: new Date().toISOString().split("T")[0]
+        });
       }
 
-      await fetchData();
       setSpareModalOpen(false);
     } catch (err) {
       console.error("Error saving spare:", err);
+      alert("Failed to save spare inventory entry");
     }
   };
 
   const handleDeleteSpare = async (id: number) => {
     if (!user) return;
+    if (!confirm("Are you sure you want to remove this item from the inventory?")) return;
     try {
-      const token = (typeof (user as any)?.getIdToken === "function") ? await (user as any).getIdToken() : "";
-      await offlineFetch(`/api/spares/${id}`, { method: "DELETE",
-        headers: { "Authorization": `Bearer ${token}` }
-      });
-      await fetchData();
+      const q = query(collection(db, 'spares'), where('id', '==', id));
+      const snap = await getDocs(q);
+      if (!snap.empty) {
+        await deleteDoc(doc(db, 'spares', snap.docs[0].id));
+      }
     } catch (err) {
       console.error("Error deleting spare:", err);
     }
@@ -1384,82 +1120,101 @@ export default function App() {
       return;
     }
 
-    // Verify inventory quantities for new uses
-    for (const item of logForm.sparesUsed) {
-      const spareInInv = sparesList.find(s => String(s.id) === item.spareId);
-      if (!spareInInv) continue;
-
-      // Calculate quantity difference
-      let difference = item.quantity;
-      if (editingLog && editingLog.spares) {
-        const oldUse = editingLog.spares.find(s => String(s.spareId) === item.spareId);
-        if (oldUse) {
-          difference = item.quantity - oldUse.quantity;
-        }
-      }
-
-      if (difference > spareInInv.quantity) {
-        alert(`Insufficient stock for spare: ${spareInInv.name}. Available: ${spareInInv.quantity}, requested additional: ${difference}`);
-        return;
-      }
-    }
-
-    const token = (typeof (user as any)?.getIdToken === "function") ? await (user as any).getIdToken() : "";
-    const url = editingLog ? `/api/logs/${editingLog.id}` : "/api/logs";
-    const method = editingLog ? "PUT" : "POST";
-
     try {
-      const res = await offlineFetch(url, { method,
-        headers: {
-          "Content-Type": "application/json",
-          "Authorization": `Bearer ${token}`
-        },
-        body: JSON.stringify({
-          bikeId: parseInt(logForm.bikeId),
-          date: logForm.date,
-          nextServiceDate: logForm.nextServiceDate || null,
-          nextServiceMileage: logForm.nextServiceMileage ? parseInt(logForm.nextServiceMileage) : null,
-          mileage: parseInt(logForm.mileage),
-          officer: logForm.officer,
-          province: logForm.province,
-          district: logForm.district,
-          workDone: logForm.workDone || null,
-          workPending: logForm.workPending || null,
-          comment: logForm.comment || null,
-          status: logForm.status,
-          spares: logForm.sparesUsed.map(s => {
-            const spareInfo = sparesList.find(sl => String(sl.id) === s.spareId);
-            return { 
-              spareId: s.spareId === "new" ? "new" : parseInt(s.spareId), 
-              spareName: s.spareName || spareInfo?.name || `Spare ID ${s.spareId}`,
-              quantity: s.quantity,
-              priceAtTime: spareInfo?.unitPrice || 0
-            };
-          })
-        })
-      });
+      if (editingLog) {
+        const q = query(collection(db, 'service_logs'), where('id', '==', editingLog.id));
+        const snap = await getDocs(q);
+        if (!snap.empty) {
+          const docRef = doc(db, 'service_logs', snap.docs[0].id);
+          await updateDoc(docRef, {
+            bikeId: parseInt(logForm.bikeId),
+            date: logForm.date,
+            nextServiceDate: logForm.nextServiceDate || null,
+            nextServiceMileage: logForm.nextServiceMileage ? parseInt(logForm.nextServiceMileage) : null,
+            mileage: parseInt(logForm.mileage),
+            officer: logForm.officer,
+            province: logForm.province,
+            district: logForm.district,
+            workDone: logForm.workDone || null,
+            workPending: logForm.workPending || null,
+            comment: logForm.comment || null,
+            status: logForm.status,
+            spares: logForm.sparesUsed.map(s => {
+              const spareInfo = sparesList.find(sl => String(sl.id) === s.spareId);
+              return { 
+                spareId: s.spareId === "new" ? "new" : parseInt(s.spareId), 
+                spareName: s.spareName || spareInfo?.name || `Spare ID ${s.spareId}`,
+                quantity: s.quantity,
+                priceAtTime: spareInfo?.unitPrice || 0
+              };
+            })
+          });
+        }
+      } else {
+        const nextId = await getNextId('service_logs');
+        const sparesToLog = logForm.sparesUsed.map(s => {
+          const spareInfo = sparesList.find(sl => String(sl.id) === s.spareId);
+          return { 
+            spareId: s.spareId === "new" ? "new" : parseInt(s.spareId), 
+            spareName: s.spareName || spareInfo?.name || `Spare ID ${s.spareId}`,
+            quantity: s.quantity,
+            priceAtTime: spareInfo?.unitPrice || 0
+          };
+        });
 
-      if (!res.ok) {
-        const errorData = await safeJson(res) || {};
-        alert(errorData.error || "Failed to save service log");
-        return;
+        await runTransaction(db, async (transaction) => {
+          // 1. Create Log
+          const logRef = doc(collection(db, 'service_logs'));
+          transaction.set(logRef, {
+            id: nextId,
+            bikeId: parseInt(logForm.bikeId),
+            date: logForm.date,
+            nextServiceDate: logForm.nextServiceDate || null,
+            nextServiceMileage: logForm.nextServiceMileage ? parseInt(logForm.nextServiceMileage) : null,
+            mileage: parseInt(logForm.mileage),
+            officer: logForm.officer,
+            province: logForm.province,
+            district: logForm.district,
+            workDone: logForm.workDone || null,
+            workPending: logForm.workPending || null,
+            comment: logForm.comment || null,
+            status: logForm.status,
+            spares: sparesToLog,
+            createdAt: new Date().toISOString()
+          });
+
+          // 2. Update Spares Inventory
+          for (const item of sparesToLog) {
+             if (item.spareId === "new") continue;
+             const sq = query(collection(db, 'spares'), where('id', '==', item.spareId));
+             const sSnap = await getDocs(sq);
+             if (!sSnap.empty) {
+               const spareDoc = sSnap.docs[0];
+               const currentQty = spareDoc.data().quantity || 0;
+               transaction.update(doc(db, 'spares', spareDoc.id), {
+                 quantity: currentQty - item.quantity
+               });
+             }
+          }
+        });
       }
 
-      await fetchData();
       setLogModalOpen(false);
-    } catch (err) {
-      console.error("Error saving service log:", err);
+    } catch (err: any) {
+      console.error("Error saving log:", err);
+      alert(err.message || "Failed to save service log entry");
     }
   };
 
   const handleDeleteLog = async (id: number) => {
     if (!user) return;
+    if (!confirm("Are you sure you want to delete this maintenance record? Inventory will not be automatically restored.")) return;
     try {
-      const token = (typeof (user as any)?.getIdToken === "function") ? await (user as any).getIdToken() : "";
-      await offlineFetch(`/api/logs/${id}`, { method: "DELETE",
-        headers: { "Authorization": `Bearer ${token}` }
-      });
-      await fetchData();
+      const q = query(collection(db, 'service_logs'), where('id', '==', id));
+      const snap = await getDocs(q);
+      if (!snap.empty) {
+        await deleteDoc(doc(db, 'service_logs', snap.docs[0].id));
+      }
     } catch (err) {
       console.error("Error deleting service log:", err);
     }
@@ -2071,17 +1826,6 @@ export default function App() {
             </div>
             
             <div className="flex items-center gap-2">
-              {(!isOnline || offlineQueue.length > 0) && (
-                <button 
-                  onClick={() => !syncing && processOfflineQueue()}
-                  disabled={syncing}
-                  className={`p-1.5 rounded-lg flex items-center gap-1.5 transition-all ${syncing ? "bg-emerald-100 text-emerald-600 animate-pulse" : "bg-amber-500/10 text-amber-500 hover:bg-amber-500/20"}`}
-                  title={syncing ? "Syncing..." : `${offlineQueue.length} unsynced actions. Click to sync.`}
-                >
-                  {syncing ? <RefreshCw className="w-4 h-4 animate-spin" /> : <CloudOff className="w-4 h-4" />}
-                  {offlineQueue.length > 0 && <span className="text-[10px] font-black">{offlineQueue.length}</span>}
-                </button>
-              )}
               <button onClick={() => setSidebarOpen(false)} className="md:hidden text-slate-400 hover:text-emerald-700 transition-colors">
                 <X className="w-5 h-5" />
               </button>
@@ -2239,34 +1983,17 @@ export default function App() {
                   {isOnline ? "System Uplink" : "Offline Mode"}
                 </span>
                 <span className="text-[8px] text-slate-500 font-bold uppercase tracking-tighter leading-none mt-1">
-                  {isOnline ? `Sync: ${lastSynced ? lastSynced.toLocaleTimeString() : 'Never'}` : `${offlineQueue.length} Pending Actions`}
+                  Real-time Data Active
                 </span>
               </div>
             </div>
 
-            {offlineQueue.length > 0 && isOnline && (
-              <button
-                onClick={() => processOfflineQueue()}
-                className="bg-amber-100 text-amber-600 hover:bg-amber-200 px-3 py-2 rounded-xl text-[10px] font-black flex items-center gap-1.5 shadow-sm transition-all animate-pulse"
-              >
-                <RefreshCw className="w-3.5 h-3.5" />
-                Sync Pending ({offlineQueue.length})
-              </button>
-            )}
-
-            {syncing && (
-              <span className="flex items-center gap-1.5 text-xs text-emerald-600 font-medium">
-                <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                Updating...
-              </span>
-            )}
-            
             <button
-              onClick={() => fetchData()}
+              onClick={() => window.location.reload()}
               className="p-2.5 rounded-xl text-slate-500 hover:bg-emerald-50 hover:text-emerald-600 border border-emerald-500/10 transition-all cursor-pointer group"
-              title="Refresh Data Matrix"
+              title="Reload App"
             >
-              <RefreshCw className={`w-4 h-4 ${syncing ? "animate-spin text-emerald-600" : "group-hover:rotate-180 transition-transform duration-500"}`} />
+              <RefreshCw className="w-4 h-4 group-hover:rotate-180 transition-transform duration-500" />
             </button>
 
             <button
@@ -2421,56 +2148,102 @@ export default function App() {
               </div>
 
               
-              {/* Expenditure Trends Chart */}
-              <motion.div
-                initial={{ opacity: 0, y: 20 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ delay: 0.4 }}
-                className="bg-white p-6 rounded-2xl border border-emerald-500/10 shadow-sm"
-              >
-                <div className="flex items-center gap-3 mb-6">
-                  <div className="p-2 bg-emerald-50 text-emerald-600 rounded-lg">
-                    <TrendingUp className="w-5 h-5" />
+              {/* Visual Intelligence Grid */}
+              <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                {/* Expenditure Trends Chart */}
+                <motion.div
+                  initial={{ opacity: 0, y: 20 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ delay: 0.4 }}
+                  className="bg-white p-6 rounded-2xl border border-emerald-500/10 shadow-sm lg:col-span-2"
+                >
+                  <div className="flex items-center gap-3 mb-6">
+                    <div className="p-2 bg-emerald-50 text-emerald-600 rounded-lg">
+                      <TrendingUp className="w-5 h-5" />
+                    </div>
+                    <div>
+                      <h3 className="font-bold text-slate-800">Monthly Expenditure Trends</h3>
+                      <p className="text-[11px] text-slate-500 font-medium">Tracking maintenance costs over time</p>
+                    </div>
                   </div>
-                  <div>
-                    <h3 className="font-bold text-slate-800">Monthly Expenditure Trends</h3>
-                    <p className="text-[11px] text-slate-500 font-medium">Tracking maintenance costs over time</p>
+                  <div className="h-[300px] w-full">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <LineChart data={monthlyExpenditure} margin={{ top: 5, right: 20, bottom: 5, left: 0 }}>
+                        <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
+                        <XAxis 
+                          dataKey="name" 
+                          axisLine={false}
+                          tickLine={false}
+                          tick={{ fontSize: 12, fill: '#64748b' }}
+                          dy={10}
+                        />
+                        <YAxis 
+                          axisLine={false}
+                          tickLine={false}
+                          tick={{ fontSize: 12, fill: '#64748b' }}
+                          tickFormatter={(value) => `K${value}`}
+                          width={60}
+                        />
+                        <Tooltip 
+                          contentStyle={{ borderRadius: '12px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1)' }}
+                          formatter={(value) => [`K${Number(value).toLocaleString(undefined, { minimumFractionDigits: 2 })}`, 'Expenditure']}
+                        />
+                        <Line 
+                          type="monotone" 
+                          dataKey="expenditure" 
+                          stroke="#10b981" 
+                          strokeWidth={3}
+                          dot={{ r: 4, fill: '#10b981', strokeWidth: 0 }}
+                          activeDot={{ r: 6, strokeWidth: 0, fill: '#059669' }}
+                        />
+                      </LineChart>
+                    </ResponsiveContainer>
                   </div>
-                </div>
-                <div className="h-[300px] w-full">
-                  <ResponsiveContainer width="100%" height="100%">
-                    <LineChart data={monthlyExpenditure} margin={{ top: 5, right: 20, bottom: 5, left: 0 }}>
-                      <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
-                      <XAxis 
-                        dataKey="name" 
-                        axisLine={false}
-                        tickLine={false}
-                        tick={{ fontSize: 12, fill: '#64748b' }}
-                        dy={10}
-                      />
-                      <YAxis 
-                        axisLine={false}
-                        tickLine={false}
-                        tick={{ fontSize: 12, fill: '#64748b' }}
-                        tickFormatter={(value) => `K${value}`}
-                        width={60}
-                      />
-                      <Tooltip 
-                        contentStyle={{ borderRadius: '12px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1)' }}
-                        formatter={(value) => [`K${Number(value).toLocaleString(undefined, { minimumFractionDigits: 2 })}`, 'Expenditure']}
-                      />
-                      <Line 
-                        type="monotone" 
-                        dataKey="expenditure" 
-                        stroke="#10b981" 
-                        strokeWidth={3}
-                        dot={{ r: 4, fill: '#10b981', strokeWidth: 0 }}
-                        activeDot={{ r: 6, strokeWidth: 0, fill: '#059669' }}
-                      />
-                    </LineChart>
-                  </ResponsiveContainer>
-                </div>
-              </motion.div>
+                </motion.div>
+
+                {/* Service Health Pie Chart */}
+                <motion.div
+                  initial={{ opacity: 0, y: 20 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ delay: 0.45 }}
+                  className="bg-white p-6 rounded-2xl border border-emerald-500/10 shadow-sm"
+                >
+                  <div className="flex items-center gap-3 mb-6">
+                    <div className="p-2 bg-blue-50 text-blue-600 rounded-lg">
+                      <Wrench className="w-5 h-5" />
+                    </div>
+                    <div>
+                      <h3 className="font-bold text-slate-800">Maintenance Health</h3>
+                      <p className="text-[11px] text-slate-500 font-medium">Service request distribution</p>
+                    </div>
+                  </div>
+                  <div className="h-[300px] w-full flex items-center justify-center">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <PieChart>
+                        <Pie
+                          data={[
+                            { name: 'Completed', value: totalCompleted },
+                            { name: 'Pending', value: totalPending }
+                          ]}
+                          cx="50%"
+                          cy="50%"
+                          innerRadius={60}
+                          outerRadius={80}
+                          paddingAngle={5}
+                          dataKey="value"
+                        >
+                          <Cell fill="#10b981" />
+                          <Cell fill="#f59e0b" />
+                        </Pie>
+                        <Tooltip 
+                          contentStyle={{ borderRadius: '12px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1)' }}
+                        />
+                        <Legend verticalAlign="bottom" height={36}/>
+                      </PieChart>
+                    </ResponsiveContainer>
+                  </div>
+                </motion.div>
+              </div>
 
               {/* Quick Admin Protocol (Shortcut Matrix) */}
 

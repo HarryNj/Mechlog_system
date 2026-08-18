@@ -1,102 +1,64 @@
 {
-  "entities": {
-    "User": {
-      "title": "User",
-      "description": "User profile and role information",
-      "type": "object",
-      "properties": {
-        "uid": { "type": "string" },
-        "email": { "type": "string" },
-        "name": { "type": "string" },
-        "role": { "type": "string", "enum": ["admin", "user"] },
-        "phoneNumber": { "type": "string" },
-        "status": { "type": "string", "enum": ["active", "inactive"] }
-      },
-      "required": ["uid", "email", "name", "role"]
+  "collections": {
+    "bikes": {
+      "id": "number",
+      "regNo": "string",
+      "province": "string",
+      "district": "string",
+      "model": "string",
+      "officer": "string",
+      "dateAdded": "string"
     },
-    "Bike": {
-      "title": "Bike",
-      "description": "Bicycle or motorcycle entity",
-      "type": "object",
-      "properties": {
-        "regNo": { "type": "string" },
-        "province": { "type": "string" },
-        "district": { "type": "string" },
-        "model": { "type": "string" },
-        "officer": { "type": "string" },
-        "dateAdded": { "type": "string" }
-      },
-      "required": ["regNo", "province", "district", "model", "officer"]
+    "spares": {
+      "id": "number",
+      "name": "string",
+      "quantity": "number",
+      "unitPrice": "number",
+      "dateAdded": "string",
+      "addedBy": "string"
     },
-    "Spare": {
-      "title": "Spare",
-      "description": "Spare part inventory item",
-      "type": "object",
-      "properties": {
-        "name": { "type": "string" },
-        "quantity": { "type": "integer" },
-        "unitPrice": { "type": "integer" },
-        "dateAdded": { "type": "string" },
-        "addedBy": { "type": "string" }
-      },
-      "required": ["name", "quantity", "unitPrice", "dateAdded"]
+    "serviceLogs": {
+      "id": "number",
+      "bikeId": "number",
+      "date": "string",
+      "nextServiceDate": "string",
+      "nextServiceMileage": "number",
+      "mileage": "number",
+      "officer": "string",
+      "province": "string",
+      "district": "string",
+      "workDone": "string",
+      "workPending": "string",
+      "comment": "string",
+      "status": "string",
+      "spares": [
+        {
+          "spareId": "number",
+          "spareName": "string",
+          "quantity": "number",
+          "priceAtTime": "number"
+        }
+      ]
     },
-    "ServiceLog": {
-      "title": "ServiceLog",
-      "description": "A log of service performed on a bike",
-      "type": "object",
-      "properties": {
-        "bikeId": { "type": "integer" },
-        "date": { "type": "string" },
-        "mileage": { "type": "integer" },
-        "officer": { "type": "string" },
-        "province": { "type": "string" },
-        "district": { "type": "string" },
-        "status": { "type": "string", "enum": ["pending", "done"] },
-        "workDone": { "type": "string" },
-        "workPending": { "type": "string" },
-        "comment": { "type": "string" },
-        "mechanicId": { "type": "string" },
-        "mechanicName": { "type": "string" }
-      },
-      "required": ["bikeId", "date", "mileage", "officer", "province", "district", "status"]
+    "serviceRequests": {
+      "id": "number",
+      "bikeId": "number",
+      "bikeReg": "string",
+      "requestedBy": "string",
+      "serviceType": "string",
+      "problemDescription": "string",
+      "status": "string",
+      "dateRequested": "string",
+      "createdAt": "string"
     },
-    "ServiceRequest": {
-      "title": "ServiceRequest",
-      "description": "A request for bike service",
-      "type": "object",
-      "properties": {
-        "bikeId": { "type": "integer" },
-        "bikeReg": { "type": "string" },
-        "requestedBy": { "type": "string" },
-        "serviceType": { "type": "string" },
-        "problemDescription": { "type": "string" },
-        "status": { "type": "string", "enum": ["pending", "done", "cancelled"] },
-        "dateRequested": { "type": "string" }
-      },
-      "required": ["bikeId", "bikeReg", "requestedBy", "serviceType", "problemDescription", "status", "dateRequested"]
-    }
-  },
-  "firestore": {
-    "/users/{userId}": {
-      "schema": "User",
-      "description": "User profiles"
-    },
-    "/bikes/{bikeId}": {
-      "schema": "Bike",
-      "description": "Inventory of bikes"
-    },
-    "/spares/{spareId}": {
-      "schema": "Spare",
-      "description": "Inventory of spare parts"
-    },
-    "/service_logs/{logId}": {
-      "schema": "ServiceLog",
-      "description": "Service history logs"
-    },
-    "/service_requests/{requestId}": {
-      "schema": "ServiceRequest",
-      "description": "Incoming service requests"
+    "users": {
+      "uid": "string",
+      "email": "string",
+      "name": "string",
+      "phoneNumber": "string",
+      "role": "string",
+      "status": "string",
+      "createdAt": "string"
     }
   }
 }
