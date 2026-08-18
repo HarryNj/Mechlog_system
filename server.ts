@@ -7,6 +7,7 @@ import http from "http";
 import { Server } from "socket.io";
 import helmet from "helmet";
 import { rateLimit } from 'express-rate-limit';
+import { GoogleGenAI } from "@google/genai";
 
 const authLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
@@ -808,6 +809,41 @@ async function startServer() {
 
 
   // --- SERVICE REQUESTS (MAILBOX) API ROUTES ---
+  app.post("/api/ai/insight", requireAuth, async (req: AuthRequest, res) => {
+    try {
+      const { bikeReg, logs } = req.body;
+      if (!bikeReg) {
+        return res.status(400).json({ error: "Bike registration is required" });
+      }
+
+      const apiKey = process.env.GEMINI_API_KEY;
+      if (!apiKey) {
+        return res.status(500).json({ error: "AI feature not configured: Missing API Key" });
+      }
+
+      const genAI = new GoogleGenAI(apiKey);
+      const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash" });
+
+      const prompt = `
+        As a Fleet Maintenance AI Assistant, analyze the following service history for bike ${bikeReg}.
+        Provide a professional, technical summary (max 4 bullet points) of the vehicle's health and any patterns of wear or specific recommendations.
+        
+        Logs:
+        ${JSON.stringify(logs, null, 2)}
+        
+        Keep it concise and actionable for a workshop manager.
+      `;
+
+      const result = await model.generateContent(prompt);
+      const text = result.response.text();
+
+      res.json({ insight: text });
+    } catch (error: any) {
+      console.error("AI Insight Error:", error);
+      res.status(500).json({ error: "Failed to generate AI insight", details: error.message });
+    }
+  });
+
   app.post("/api/requests", requireAuth, async (req: AuthRequest, res) => {
     try {
       const { bikeId, serviceType, problemDescription, dateRequested } = req.body;

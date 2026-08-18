@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef, useMemo } from "react";
+import ReactMarkdown from "react-markdown";
 import { motion, AnimatePresence } from "motion/react";
 import "react-phone-number-input/style.css";
 import PhoneInput from "react-phone-number-input";
@@ -48,6 +49,8 @@ import {
   Cloud,
   CloudOff,
   Cpu,
+  Sparkles,
+  BrainCircuit,
   ExternalLink,
   Zap,
   Database,
@@ -555,6 +558,9 @@ export default function App() {
     sparesUsed: [] as { spareId: string; spareName: string; quantity: number }[]
   });
 
+  const [fetchingAiInsight, setFetchingAiInsight] = useState(false);
+  const [aiInsight, setAiInsight] = useState<string | null>(null);
+
   // Track Auth State (Firebase and persistent)
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
@@ -888,6 +894,36 @@ export default function App() {
       }
     } catch (err) {
       console.error("Error deleting request:", err);
+    }
+  };
+
+  const getAiInsight = async (bikeReg?: string, logs?: any[]) => {
+    setFetchingAiInsight(true);
+    setAiInsight(null);
+    try {
+      const targetReg = bikeReg || "Fleet-wide";
+      const targetLogs = logs || logsList.slice(0, 50);
+      
+      const res = await fetch("/api/ai/insight", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${user?.token || ""}`
+        },
+        body: JSON.stringify({ bikeReg: targetReg, logs: targetLogs })
+      });
+      
+      const data = await res.json();
+      if (data.insight) {
+        setAiInsight(data.insight);
+      } else {
+        alert(data.error || "Failed to get AI insight");
+      }
+    } catch (err) {
+      console.error(err);
+      alert("Error connecting to AI service");
+    } finally {
+      setFetchingAiInsight(false);
     }
   };
 
@@ -2147,7 +2183,73 @@ export default function App() {
                 </motion.div>
               </div>
 
-              
+              {/* AI Fleet Insights Section */}
+              <motion.div 
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                className="bg-gradient-to-br from-slate-900 to-slate-800 rounded-[2rem] p-8 border border-slate-700/50 shadow-2xl relative overflow-hidden"
+              >
+                <div className="absolute top-0 right-0 p-8 opacity-10">
+                  <Sparkles className="w-32 h-32 text-blue-400" />
+                </div>
+                
+                <div className="relative z-10">
+                  <div className="flex flex-col md:flex-row md:items-center justify-between gap-6">
+                    <div className="space-y-2">
+                      <div className="flex items-center gap-2 text-blue-400 font-black uppercase tracking-[0.3em] text-[10px]">
+                        <Cpu className="w-4 h-4" />
+                        AI Maintenance Intelligence
+                      </div>
+                      <h2 className="text-3xl font-black text-white italic uppercase tracking-tighter">Fleet Health Analysis</h2>
+                      <p className="text-slate-400 text-xs font-bold max-w-md">Gemini-powered pattern recognition. Analyzing technical service history for predictive maintenance insights.</p>
+                    </div>
+                    
+                    <button
+                      onClick={() => getAiInsight()}
+                      disabled={fetchingAiInsight}
+                      className="px-8 py-4 bg-blue-600 hover:bg-blue-500 disabled:bg-slate-700 text-white rounded-2xl font-black uppercase tracking-widest text-xs transition-all shadow-lg shadow-blue-600/20 active:scale-95 flex items-center gap-3 group cursor-pointer"
+                    >
+                      {fetchingAiInsight ? (
+                        <>
+                          <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                          Processing...
+                        </>
+                      ) : (
+                        <>
+                          <Sparkles className="w-4 h-4 group-hover:rotate-12 transition-transform" />
+                          Generate Insight
+                        </>
+                      )}
+                    </button>
+                  </div>
+
+                  {aiInsight && (
+                    <motion.div 
+                      initial={{ opacity: 0, height: 0 }}
+                      animate={{ opacity: 1, height: "auto" }}
+                      className="mt-8 p-6 bg-slate-800/50 rounded-2xl border border-slate-700/50 backdrop-blur-sm"
+                    >
+                      <div className="flex items-start gap-4">
+                        <div className="p-3 bg-blue-500/20 rounded-xl text-blue-400 flex-shrink-0">
+                          <BrainCircuit className="w-6 h-6" />
+                        </div>
+                        <div className="space-y-3 prose prose-invert max-w-none prose-sm">
+                          <div className="text-slate-300 text-sm leading-relaxed font-medium">
+                            <ReactMarkdown>{aiInsight}</ReactMarkdown>
+                          </div>
+                          <button 
+                            onClick={() => setAiInsight(null)}
+                            className="text-[10px] text-slate-500 hover:text-slate-300 uppercase font-black tracking-widest cursor-pointer"
+                          >
+                            Dismiss Analysis
+                          </button>
+                        </div>
+                      </div>
+                    </motion.div>
+                  )}
+                </div>
+              </motion.div>
+
               {/* Visual Intelligence Grid */}
               <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
                 {/* Expenditure Trends Chart */}
