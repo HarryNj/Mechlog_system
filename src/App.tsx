@@ -34,6 +34,7 @@ import {
   Phone,
   ArrowRight,
   Cloud,
+  CloudOff,
   Cpu,
   ExternalLink,
   Zap,
@@ -356,7 +357,6 @@ export default function App() {
     setOfflineQueue(newQueue);
     if (syncedCount > 0) {
       fetchData();
-      alert(`Synced ${syncedCount} offline actions successfully.`);
     }
     setSyncing(false);
   };
@@ -377,9 +377,13 @@ export default function App() {
     if (navigator.onLine) {
       try {
         const res = await fetch(url, options);
+        if (res.status === 401 || res.status === 403) {
+          // Explicitly handle auth errors - don't queue these, they need login
+          return res;
+        }
         if (!res.ok) {
-          if (res.status === 404 || res.status === 405 || res.status >= 500) {
-            throw new Error("Server or API Error");
+          if (res.status >= 500) {
+            throw new Error("Server Error");
           }
         }
         return res;
@@ -388,11 +392,14 @@ export default function App() {
       }
     }
     
-    const queue = JSON.parse(localStorage.getItem('eff_offline_queue') || '[]');
-    queue.push({ url, options });
-    localStorage.setItem('eff_offline_queue', JSON.stringify(queue));
-    setOfflineQueue(queue);
-    alert('You are currently offline or the server is unreachable. This action has been saved locally and will sync when network is available.');
+    // Only queue non-GET requests (mutations)
+    if (options.method && options.method !== 'GET') {
+      const queue = JSON.parse(localStorage.getItem('eff_offline_queue') || '[]');
+      queue.push({ url, options, timestamp: new Date().toISOString() });
+      localStorage.setItem('eff_offline_queue', JSON.stringify(queue));
+      setOfflineQueue(queue);
+    }
+    
     return { ok: true, json: async () => ({ status: "success", offline: true }) } as any;
   };
 
@@ -2051,10 +2058,16 @@ export default function App() {
             </div>
             
             <div className="flex items-center gap-2">
-              {!isOnline && (
-                <div className="p-1.5 bg-amber-500/10 text-amber-500 rounded-lg" title={`Offline Mode (${offlineQueue.length} unsynced)`}>
-                  <AlertCircle className="w-4 h-4" />
-                </div>
+              {(!isOnline || offlineQueue.length > 0) && (
+                <button 
+                  onClick={() => !syncing && processOfflineQueue()}
+                  disabled={syncing}
+                  className={`p-1.5 rounded-lg flex items-center gap-1.5 transition-all ${syncing ? "bg-emerald-100 text-emerald-600 animate-pulse" : "bg-amber-500/10 text-amber-500 hover:bg-amber-500/20"}`}
+                  title={syncing ? "Syncing..." : `${offlineQueue.length} unsynced actions. Click to sync.`}
+                >
+                  {syncing ? <RefreshCw className="w-4 h-4 animate-spin" /> : <CloudOff className="w-4 h-4" />}
+                  {offlineQueue.length > 0 && <span className="text-[10px] font-black">{offlineQueue.length}</span>}
+                </button>
               )}
               <button onClick={() => setSidebarOpen(false)} className="md:hidden text-slate-400 hover:text-emerald-700 transition-colors">
                 <X className="w-5 h-5" />
