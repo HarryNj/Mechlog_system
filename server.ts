@@ -843,20 +843,30 @@ async function startServer() {
       // Retry mechanism for 503 errors
       let result;
       let retries = 0;
-      const maxRetries = 3;
+      const maxRetries = 5;
       while (retries < maxRetries) {
         try {
           result = await ai.models.generateContent({
-            model: "gemini-3.7-flash",
+            model: "gemini-3.1-flash-lite",
             contents: prompt,
           });
           break;
         } catch (error: any) {
           retries++;
-          const isRetryable = error.status === 503 || error.code === 503 || error.message?.includes("503") || error.message?.includes("high demand") || error.message?.includes("UNAVAILABLE");
+          const errorMsg = error.message || "";
+          const isRetryable = 
+            error.status === 503 || 
+            error.code === 503 || 
+            errorMsg.includes("503") || 
+            errorMsg.includes("high demand") || 
+            errorMsg.includes("UNAVAILABLE") ||
+            errorMsg.includes("Service Unavailable") ||
+            errorMsg.includes("overloaded");
+
           if (isRetryable && retries < maxRetries) {
-            const delay = 1000 * Math.pow(2, retries - 1);
-            console.warn(`Gemini API high demand (503), retrying in ${delay}ms... (Attempt ${retries}/${maxRetries})`);
+            // Exponential backoff with jitter
+            const delay = (1000 * Math.pow(2, retries - 1)) + (Math.random() * 500);
+            console.warn(`Gemini API high demand (503), retrying in ${Math.round(delay)}ms... (Attempt ${retries}/${maxRetries})`);
             await new Promise(resolve => setTimeout(resolve, delay));
             continue;
           }
