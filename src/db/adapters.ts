@@ -373,9 +373,25 @@ export async function createLog(logData: any, sparesUsedList: any[]) {
     const id = await getNextFirestoreId("service_logs");
     const enrichedSpares = [];
     for (const item of sparesUsedList) {
-      const spare = await getSpareById(item.spareId);
+      let spare = null;
+      if (item.spareId) {
+        spare = await getSpareById(item.spareId);
+      } else if (item.spareName) {
+        spare = await getSpareByName(item.spareName);
+        if (!spare) {
+          spare = await createSpare({
+            name: item.spareName,
+            quantity: item.quantity, // Start with usage amount so it deducts to zero
+            unitPrice: 0,
+            dateAdded: logData.date,
+            addedBy: logData.officer || "System"
+          });
+        }
+      }
+
       enrichedSpares.push({
         ...item,
+        spareId: spare?.id || null,
         priceAtTime: spare?.unitPrice || 0
       });
       if (spare) {
@@ -422,29 +438,53 @@ export async function createLog(logData: any, sparesUsedList: any[]) {
 
     const populatedSpares = [];
     for (const sp of sparesUsedList) {
-      // Lookup current price if not provided
+      let resolvedSpareId = sp.spareId;
       let currentPrice = sp.priceAtTime;
-      if (currentPrice === undefined) {
+
+      if (!resolvedSpareId && sp.spareName) {
+        // Try to find by name in inventory
+        const [existing] = await tx.select()
+          .from(sparesInventory)
+          .where(eq(sparesInventory.name, sp.spareName));
+        
+        if (existing) {
+          resolvedSpareId = existing.id;
+          if (currentPrice === undefined) currentPrice = existing.unitPrice;
+        } else {
+          // Create new spare in inventory
+          const [inserted] = await tx.insert(sparesInventory).values({
+            name: sp.spareName,
+            quantity: sp.quantity, // Start with usage so it deducts to zero
+            unitPrice: 0,
+            dateAdded: logData.date,
+            addedBy: logData.officer || "System"
+          }).returning();
+          resolvedSpareId = inserted.id;
+          if (currentPrice === undefined) currentPrice = 0;
+        }
+      } else if (resolvedSpareId && currentPrice === undefined) {
         const [spare] = await tx.select({ unitPrice: sparesInventory.unitPrice })
           .from(sparesInventory)
-          .where(eq(sparesInventory.id, sp.spareId));
+          .where(eq(sparesInventory.id, resolvedSpareId));
         currentPrice = spare?.unitPrice || 0;
       }
 
       const [insertedSpareRelation] = await tx.insert(serviceLogSpares).values({
         serviceLogId: insertedLog.id,
-        spareId: sp.spareId,
+        spareId: resolvedSpareId,
         spareName: sp.spareName,
         quantity: sp.quantity,
-        priceAtTime: currentPrice,
+        priceAtTime: currentPrice || 0,
       }).returning();
 
       // Deduct quantity from inventory
-      await tx.execute(sql`
-        UPDATE spares_inventory 
-        SET quantity = GREATEST(0, quantity - ${sp.quantity}) 
-        WHERE id = ${sp.spareId}
-      `);
+      if (resolvedSpareId) {
+        await tx.execute(sql`
+          UPDATE spares_inventory 
+          SET quantity = GREATEST(0, quantity - ${sp.quantity}) 
+          WHERE id = ${resolvedSpareId}
+        `);
+      }
 
       populatedSpares.push(insertedSpareRelation);
     }

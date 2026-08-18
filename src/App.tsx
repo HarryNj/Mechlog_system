@@ -571,7 +571,7 @@ export default function App() {
     workPending: "",
     comment: "",
     status: "pending",
-    sparesUsed: [] as { spareId: string; quantity: number }[]
+    sparesUsed: [] as { spareId: string; spareName: string; quantity: number }[]
   });
 
   // Track Auth State (Firebase and persistent)
@@ -1331,7 +1331,7 @@ export default function App() {
         workPending: log.workPending || "",
         comment: log.comment || "",
         status: log.status,
-        sparesUsed: log.spares ? log.spares.map(s => ({ spareId: String(s.spareId), quantity: s.quantity })) : []
+        sparesUsed: log.spares ? log.spares.map(s => ({ spareId: String(s.spareId), spareName: s.spareName, quantity: s.quantity })) : []
       });
     } else {
       setEditingLog(null);
@@ -1348,7 +1348,7 @@ export default function App() {
         workPending: "",
         comment: "",
         status: "pending",
-        sparesUsed: []
+        sparesUsed: [] as { spareId: string; spareName: string; quantity: number }[]
       });
     }
     setLogModalOpen(true);
@@ -1410,8 +1410,8 @@ export default function App() {
           spares: logForm.sparesUsed.map(s => {
             const spareInfo = sparesList.find(sl => String(sl.id) === s.spareId);
             return { 
-              spareId: parseInt(s.spareId), 
-              spareName: spareInfo?.name || `Spare ID ${s.spareId}`,
+              spareId: s.spareId === "new" ? "new" : parseInt(s.spareId), 
+              spareName: s.spareName || spareInfo?.name || `Spare ID ${s.spareId}`,
               quantity: s.quantity,
               priceAtTime: spareInfo?.unitPrice || 0
             };
@@ -1469,7 +1469,7 @@ export default function App() {
   const addSpareField = () => {
     setLogForm(prev => ({
       ...prev,
-      sparesUsed: [...prev.sparesUsed, { spareId: "", quantity: 1 }]
+      sparesUsed: [...prev.sparesUsed, { spareId: "", spareName: "", quantity: 1 }]
     }));
   };
 
@@ -1480,11 +1480,25 @@ export default function App() {
     }));
   };
 
-  const updateSpareField = (index: number, field: "spareId" | "quantity", value: string | number) => {
+  const updateSpareField = (index: number, field: "spareId" | "spareName" | "quantity", value: string | number) => {
     setLogForm(prev => {
       const updated = [...prev.sparesUsed];
-      if (field === "spareId") {
-        updated[index] = { ...updated[index], spareId: String(value) };
+      if (field === "spareName") {
+        const name = String(value);
+        const matched = sparesList.find(s => s.name.toLowerCase() === name.toLowerCase());
+        updated[index] = { 
+          ...updated[index], 
+          spareName: name, 
+          spareId: matched ? String(matched.id) : "new" 
+        };
+      } else if (field === "spareId") {
+        const id = String(value);
+        const matched = sparesList.find(s => String(s.id) === id);
+        updated[index] = { 
+          ...updated[index], 
+          spareId: id, 
+          spareName: matched ? matched.name : updated[index].spareName 
+        };
       } else {
         updated[index] = { ...updated[index], quantity: parseInt(String(value)) || 1 };
       }
@@ -3993,30 +4007,25 @@ export default function App() {
                     logForm.sparesUsed.map((item, index) => {
                       return (
                         <div key={index} className="flex gap-3 items-center">
-                          {/* Spare Select */}
-                          <select
-                            required
-                            value={item.spareId}
-                            onChange={(e) => updateSpareField(index, "spareId", e.target.value)}
-                            className="flex-1 px-3 py-2 rounded-xl border border-slate-200 text-xs focus:ring-2 focus:ring-blue-500 outline-none bg-white text-slate-700"
-                          >
-                            <option value="">Select Spare from Inventory...</option>
-                            {sparesList.map(s => {
-                              // If this is the currently selected item, include original quantity, else current quantity
-                              let originalQty = s.quantity;
-                              if (editingLog && editingLog.spares) {
-                                const matchedOld = editingLog.spares.find(os => String(os.spareId) === String(s.id));
-                                if (matchedOld) {
-                                  originalQty += matchedOld.quantity;
-                                }
-                              }
-                              return (
-                                <option key={s.id} value={s.id} disabled={originalQty <= 0 && String(s.id) !== item.spareId}>
-                                  {s.name} ({originalQty} available) - K{s.unitPrice?.toLocaleString()}
+                          {/* Spare Searchable Input */}
+                          <div className="flex-1 relative">
+                            <input
+                              required
+                              type="text"
+                              list="spares-inventory-list"
+                              placeholder="Search or add new spare..."
+                              value={item.spareName}
+                              onChange={(e) => updateSpareField(index, "spareName", e.target.value)}
+                              className="w-full px-3 py-2 rounded-xl border border-slate-200 text-xs focus:ring-2 focus:ring-blue-500 outline-none bg-white text-slate-700"
+                            />
+                            <datalist id="spares-inventory-list">
+                              {sparesList.map(s => (
+                                <option key={s.id} value={s.name}>
+                                  {s.quantity} available - K{s.unitPrice?.toLocaleString()}
                                 </option>
-                              );
-                            })}
-                          </select>
+                              ))}
+                            </datalist>
+                          </div>
 
                           {/* Quantity */}
                           <input

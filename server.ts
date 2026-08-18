@@ -625,10 +625,10 @@ async function startServer() {
       }
 
       const sparesList = (spares && Array.isArray(spares)) ? spares.map(item => ({
-        spareId: parseInt(item.spareId),
-        spareName: item.spareName || `Spare ID ${item.spareId}`,
+        spareId: (item.spareId === "new" || isNaN(parseInt(item.spareId))) ? null : parseInt(item.spareId),
+        spareName: item.spareName || (item.spareId && item.spareId !== "new" ? `Spare ID ${item.spareId}` : "Unknown Spare"),
         quantity: parseInt(item.quantity) || 1
-      })).filter(item => !isNaN(item.spareId)) : [];
+      })).filter(item => item.spareId !== null || (item.spareName && item.spareName !== "Unknown Spare")) : [];
 
       const result = await createLog({
         bikeId: parseInt(bikeId),
