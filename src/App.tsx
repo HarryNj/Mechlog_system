@@ -1483,22 +1483,20 @@ export default function App() {
   const updateSpareField = (index: number, field: "spareId" | "spareName" | "quantity", value: string | number) => {
     setLogForm(prev => {
       const updated = [...prev.sparesUsed];
-      if (field === "spareName") {
-        const name = String(value);
-        const matched = sparesList.find(s => s.name.toLowerCase() === name.toLowerCase());
-        updated[index] = { 
-          ...updated[index], 
-          spareName: name, 
-          spareId: matched ? String(matched.id) : "new" 
-        };
-      } else if (field === "spareId") {
+      if (field === "spareId") {
         const id = String(value);
-        const matched = sparesList.find(s => String(s.id) === id);
-        updated[index] = { 
-          ...updated[index], 
-          spareId: id, 
-          spareName: matched ? matched.name : updated[index].spareName 
-        };
+        if (id === "new") {
+          updated[index] = { ...updated[index], spareId: "new", spareName: "" };
+        } else {
+          const matched = sparesList.find(s => String(s.id) === id);
+          updated[index] = { 
+            ...updated[index], 
+            spareId: id, 
+            spareName: matched ? matched.name : (id === "" ? "" : updated[index].spareName) 
+          };
+        }
+      } else if (field === "spareName") {
+        updated[index] = { ...updated[index], spareName: String(value), spareId: "new" };
       } else {
         updated[index] = { ...updated[index], quantity: parseInt(String(value)) || 1 };
       }
@@ -4004,28 +4002,45 @@ export default function App() {
                   {logForm.sparesUsed.length === 0 ? (
                     <p className="text-xs text-slate-400 italic">No spares selected for this service.</p>
                   ) : (
-                    logForm.sparesUsed.map((item, index) => {
-                      return (
-                        <div key={index} className="flex gap-3 items-center">
-                          {/* Spare Searchable Input */}
-                          <div className="flex-1 relative">
-                            <input
-                              required
-                              type="text"
-                              list="spares-inventory-list"
-                              placeholder="Search or add new spare..."
-                              value={item.spareName}
-                              onChange={(e) => updateSpareField(index, "spareName", e.target.value)}
-                              className="w-full px-3 py-2 rounded-xl border border-slate-200 text-xs focus:ring-2 focus:ring-blue-500 outline-none bg-white text-slate-700"
-                            />
-                            <datalist id="spares-inventory-list">
-                              {sparesList.map(s => (
-                                <option key={s.id} value={s.name}>
-                                  {s.quantity} available - K{s.unitPrice?.toLocaleString()}
-                                </option>
-                              ))}
-                            </datalist>
-                          </div>
+                        logForm.sparesUsed.map((item, index) => {
+                          return (
+                            <div key={index} className="flex gap-3 items-center">
+                              <div className="flex-1 flex flex-col gap-2">
+                                {item.spareId === "new" ? (
+                                  <div className="flex gap-2 items-center">
+                                    <input
+                                      required
+                                      type="text"
+                                      placeholder="Enter new spare name..."
+                                      value={item.spareName}
+                                      onChange={(e) => updateSpareField(index, "spareName", e.target.value)}
+                                      className="flex-1 px-3 py-2 rounded-xl border border-blue-400 bg-blue-50/50 text-xs focus:ring-2 focus:ring-blue-500 outline-none text-slate-700 font-bold"
+                                    />
+                                    <button
+                                      type="button"
+                                      onClick={() => updateSpareField(index, "spareId", "")}
+                                      className="text-[10px] text-slate-400 hover:text-slate-600 underline font-bold"
+                                    >
+                                      Back to List
+                                    </button>
+                                  </div>
+                                ) : (
+                                  <select
+                                    required
+                                    value={item.spareId}
+                                    onChange={(e) => updateSpareField(index, "spareId", e.target.value)}
+                                    className="w-full px-3 py-2 rounded-xl border border-slate-200 text-xs focus:ring-2 focus:ring-blue-500 outline-none bg-white text-slate-700"
+                                  >
+                                    <option value="">Choose from Inventory...</option>
+                                    {sparesList.map(s => (
+                                      <option key={s.id} value={s.id}>
+                                        {s.name} ({s.quantity} available) - K{s.unitPrice?.toLocaleString()}
+                                      </option>
+                                    ))}
+                                    <option value="new" className="font-bold text-blue-600 bg-blue-50">+ Add New Spare (not in list)</option>
+                                  </select>
+                                )}
+                              </div>
 
                           {/* Quantity */}
                           <input
