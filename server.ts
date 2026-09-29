@@ -222,32 +222,32 @@ async function ensureDatabaseSchema() {
 async function startServer() {
   const app = express();
   app.set('trust proxy', 1);
-  const PORT = 3000;
+  // In dev environment or behind AI Studio Nginx reverse proxy, port must be DEFAULT_APP_PORT (3000)
+  const PORT = process.env.DEFAULT_APP_PORT
+    ? parseInt(process.env.DEFAULT_APP_PORT, 10)
+    : (process.env.NODE_ENV === "production" ? parseInt(process.env.PORT || "3000", 10) : 3000);
   const server = http.createServer(app);
   
-  // Security headers
+  // Security headers: configured to allow embedding within the AI Studio workspace iframe
   app.use(helmet({
-    contentSecurityPolicy: false, // Disabled for Vite development compatibility
+    contentSecurityPolicy: false,
+    frameguard: false,
+    crossOriginEmbedderPolicy: false,
+    crossOriginOpenerPolicy: false,
+    crossOriginResourcePolicy: false,
   }));
+
+  // Ensure X-Frame-Options is not blocking iframe embedding
+  app.use((_req, res, next) => {
+    res.removeHeader("X-Frame-Options");
+    next();
+  });
 
   app.use("/api/auth", authLimiter);
 
   // Basic health check
   app.get("/api/health", (req, res) => {
-
     res.json({ status: "ok", uptime: process.uptime() });
-  });
-
-  // Start listening immediately so health checks pass
-  server.listen(PORT, "0.0.0.0", () => {
-    console.log(`Server running on http://localhost:${PORT}`);
-    
-    // Perform database schema check in the background
-    ensureDatabaseSchema().then(() => {
-      console.log("Background database initialization complete.");
-    }).catch(err => {
-      console.error("Background database initialization failed:", err);
-    });
   });
 
   const io = new Server(server, {
@@ -1010,6 +1010,18 @@ async function startServer() {
       res.sendFile(path.join(distPath, "index.html"));
     });
   }
+
+  // Start listening after all routes and Vite middlewares are bound
+  server.listen(PORT, "0.0.0.0", () => {
+    console.log(`Server running on http://localhost:${PORT}`);
+    
+    // Perform database schema check in the background
+    ensureDatabaseSchema().then(() => {
+      console.log("Background database initialization complete.");
+    }).catch(err => {
+      console.error("Background database initialization failed:", err);
+    });
+  });
 }
 
 startServer();
