@@ -63,7 +63,11 @@ import {
   Coins,
   Tag,
   BarChart3,
-  Activity
+  Activity,
+  Wifi,
+  WifiOff,
+  Check,
+  Info
 } from "lucide-react";
 import * as XLSX from "xlsx";
 
@@ -211,7 +215,15 @@ interface UserDBType {
   createdAt?: string;
 }
 
-
+interface OfflineQueueItem {
+  id: string;
+  type: 'bike' | 'spare' | 'log' | 'request';
+  action: 'create' | 'update' | 'delete';
+  data: any;
+  targetId?: number;
+  timestamp: number;
+  description: string;
+}
 
 function AgreementModal({ isOpen, onClose }: { isOpen: boolean; onClose: () => void }) {
   return (
@@ -344,47 +356,15 @@ export default function App() {
   
   const [loading, setLoading] = useState(true);
   const [isOnline, setIsOnline] = useState(typeof window !== 'undefined' ? window.navigator.onLine : true);
-  const [dbLayer, setDbLayer] = useState<"firestore" | "sql">("firestore");
-
-  const safeJson = async (res: Response) => {
+  const [isSimulatedOffline, setIsSimulatedOffline] = useState(() => {
     try {
-      const contentType = res.headers.get("content-type");
-      if (contentType && contentType.includes("application/json")) {
-        return await res.clone().json();
-      }
-      return null;
-    } catch {
-      return null;
-    }
-  };
-
-  useEffect(() => {
-    const fetchDbStatus = async () => {
-      try {
-        const res = await fetch("/api/health");
-        const data = await safeJson(res) || {};
-        if (data.status === "ok") {
-          setDbLayer(data.useFirestore ? "firestore" : "sql");
-        }
-      } catch (err) {
-        // Fallback to firestore silently if backend health check fails (e.g. during static export like Cloudflare Pages)
-        setDbLayer("firestore");
-      }
-    };
-    fetchDbStatus();
-
-    const handleOnline = async () => {
-      setIsOnline(true);
-    };
-    const handleOffline = () => setIsOnline(false);
-    window.addEventListener('online', handleOnline);
-    window.addEventListener('offline', handleOffline);
-    return () => {
-      window.removeEventListener('online', handleOnline);
-      window.removeEventListener('offline', handleOffline);
-    };
-  }, []);
-
+      return localStorage.getItem("eff_simulated_offline") === "true";
+    } catch { return false; }
+  });
+  const effectiveOnline = isOnline && !isSimulatedOffline;
+  const [dbLayer, setDbLayer] = useState<"firestore" | "sql">("firestore");
+  const [connectionLatency, setConnectionLatency] = useState<number | null>(null);
+  const [expenditureModalOpen, setExpenditureModalOpen] = useState(false);
 
   // Local Storage Helpers
   const saveToStorage = (key: string, data: any) => {
@@ -401,6 +381,278 @@ export default function App() {
       return [];
     }
   };
+
+  // Offline Sync State
+  const [offlineQueue, setOfflineQueue] = useState<OfflineQueueItem[]>(() => loadFromStorage("offline_queue"));
+  const [isSyncing, setIsSyncing] = useState(false);
+  const [lastSyncTime, setLastSyncTime] = useState<Date | null>(() => {
+    try {
+      const stored = localStorage.getItem("lastSyncTime");
+      return stored ? new Date(stored) : null;
+    } catch { return null; }
+  });
+  const [syncModalOpen, setSyncModalOpen] = useState(false);
+  const [offlineBannerDismissed, setOfflineBannerDismissed] = useState(false);
+  const [toastNotification, setToastNotification] = useState<{ message: string; type: "success" | "info" | "warning" } | null>(null);
+
+  const toggleSimulatedOffline = () => {
+    setIsSimulatedOffline(prev => {
+      const next = !prev;
+      try {
+        localStorage.setItem("eff_simulated_offline", String(next));
+      } catch {}
+      setToastNotification({
+        type: next ? "warning" : "success",
+        message: next 
+          ? "Simulated Offline Mode enabled. All changes will be saved to local storage." 
+          : "Online connection restored. Auto-synchronizing offline records..."
+      });
+      return next;
+    });
+  };
+
+  const enqueueOfflineAction = (action: OfflineQueueItem) => {
+    setOfflineQueue(prev => {
+      const updated = [...prev, action];
+      saveToStorage("offline_queue", updated);
+      return updated;
+    });
+  };
+
+  const clearOfflineQueue = () => {
+    if (confirm("Are you sure you want to clear the pending offline queue? Unsynced actions will be discarded.")) {
+      setOfflineQueue([]);
+      saveToStorage("offline_queue", []);
+      setToastNotification({
+        type: "info",
+        message: "Offline queue cleared."
+      });
+    }
+  };
+
+  const safeJson = async (res: Response) => {
+    try {
+      const contentType = res.headers.get("content-type");
+      if (contentType && contentType.includes("application/json")) {
+        return await res.clone().json();
+      }
+      return null;
+    } catch {
+      return null;
+    }
+  };
+
+  // Active Connection Heartbeat & Ping check
+  const checkConnection = async (): Promise<boolean> => {
+    if (typeof window === 'undefined') return true;
+    if (!navigator.onLine) {
+      setIsOnline(false);
+      return false;
+    }
+    const start = performance.now();
+    try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 3500);
+      const res = await fetch("/api/health", { signal: controller.signal, cache: "no-store" });
+      clearTimeout(timeoutId);
+      const latency = Math.round(performance.now() - start);
+      setConnectionLatency(latency);
+      if (res.ok) {
+        setIsOnline(true);
+        return true;
+      }
+      setIsOnline(false);
+      return false;
+    } catch {
+      const fallback = navigator.onLine;
+      setIsOnline(fallback);
+      return fallback;
+    }
+  };
+
+  // Sync Offline Queue to Database
+  const syncOfflineQueue = async () => {
+    if (isSyncing || !effectiveOnline) return;
+    const currentQueue = [...offlineQueue];
+    if (currentQueue.length === 0) {
+      setToastNotification({
+        type: "info",
+        message: "All records are synchronized with database."
+      });
+      return;
+    }
+
+    setIsSyncing(true);
+    let successCount = 0;
+    const remainingQueue: OfflineQueueItem[] = [];
+
+    for (const item of currentQueue) {
+      try {
+        if (item.type === 'bike') {
+          if (item.action === 'create') {
+            const nextId = await getNextId('bikes');
+            await addDoc(collection(db, 'bikes'), { ...item.data, id: nextId });
+          } else if (item.action === 'update') {
+            const q = query(collection(db, 'bikes'), where('id', '==', item.targetId));
+            const snap = await getDocs(q);
+            if (!snap.empty) await updateDoc(doc(db, 'bikes', snap.docs[0].id), item.data);
+          } else if (item.action === 'delete') {
+            const q = query(collection(db, 'bikes'), where('id', '==', item.targetId));
+            const snap = await getDocs(q);
+            if (!snap.empty) await deleteDoc(doc(db, 'bikes', snap.docs[0].id));
+          }
+        } else if (item.type === 'spare') {
+          if (item.action === 'create') {
+            const nextId = await getNextId('spares');
+            await addDoc(collection(db, 'spares'), { ...item.data, id: nextId });
+          } else if (item.action === 'update') {
+            const q = query(collection(db, 'spares'), where('id', '==', item.targetId));
+            const snap = await getDocs(q);
+            if (!snap.empty) await updateDoc(doc(db, 'spares', snap.docs[0].id), item.data);
+          } else if (item.action === 'delete') {
+            const q = query(collection(db, 'spares'), where('id', '==', item.targetId));
+            const snap = await getDocs(q);
+            if (!snap.empty) await deleteDoc(doc(db, 'spares', snap.docs[0].id));
+          }
+        } else if (item.type === 'log') {
+          if (item.action === 'create') {
+            const nextId = await getNextId('service_logs');
+            const logRef = doc(collection(db, 'service_logs'));
+            await setDoc(logRef, {
+              ...item.data,
+              id: nextId,
+              createdAt: new Date().toISOString()
+            });
+            if (item.data.spares && Array.isArray(item.data.spares)) {
+              for (const s of item.data.spares) {
+                if (s.spareId && s.spareId !== 'new') {
+                  const sq = query(collection(db, 'spares'), where('id', '==', s.spareId));
+                  const sSnap = await getDocs(sq);
+                  if (!sSnap.empty) {
+                    const currentQty = sSnap.docs[0].data().quantity || 0;
+                    await updateDoc(sSnap.docs[0].ref, {
+                      quantity: Math.max(0, currentQty - s.quantity)
+                    });
+                  }
+                }
+              }
+            }
+          } else if (item.action === 'update') {
+            const q = query(collection(db, 'service_logs'), where('id', '==', item.targetId));
+            const snap = await getDocs(q);
+            if (!snap.empty) await updateDoc(doc(db, 'service_logs', snap.docs[0].id), item.data);
+          } else if (item.action === 'delete') {
+            const q = query(collection(db, 'service_logs'), where('id', '==', item.targetId));
+            const snap = await getDocs(q);
+            if (!snap.empty) await deleteDoc(doc(db, 'service_logs', snap.docs[0].id));
+          }
+        } else if (item.type === 'request') {
+          if (item.action === 'create') {
+            const nextId = await getNextId('service_requests');
+            await addDoc(collection(db, 'service_requests'), { ...item.data, id: nextId });
+          } else if (item.action === 'update') {
+            const q = query(collection(db, 'service_requests'), where('id', '==', item.targetId));
+            const snap = await getDocs(q);
+            if (!snap.empty) await updateDoc(doc(db, 'service_requests', snap.docs[0].id), item.data);
+          } else if (item.action === 'delete') {
+            const q = query(collection(db, 'service_requests'), where('id', '==', item.targetId));
+            const snap = await getDocs(q);
+            if (!snap.empty) await deleteDoc(doc(db, 'service_requests', snap.docs[0].id));
+          }
+        }
+        successCount++;
+      } catch (err) {
+        console.error("Sync item failed:", item, err);
+        remainingQueue.push(item);
+      }
+    }
+
+    setOfflineQueue(remainingQueue);
+    saveToStorage("offline_queue", remainingQueue);
+    setIsSyncing(false);
+    const now = new Date();
+    setLastSyncTime(now);
+    try {
+      localStorage.setItem("lastSyncTime", now.toISOString());
+    } catch {}
+
+    if (successCount > 0) {
+      setToastNotification({
+        type: "success",
+        message: `Sync complete! Successfully synchronized ${successCount} offline record${successCount > 1 ? 's' : ''} to database.`
+      });
+    } else if (remainingQueue.length > 0) {
+      setToastNotification({
+        type: "warning",
+        message: "Some records could not sync. Check connection and try again."
+      });
+    }
+  };
+
+  useEffect(() => {
+    const fetchDbStatus = async () => {
+      try {
+        const res = await fetch("/api/health");
+        const data = await safeJson(res) || {};
+        if (data.status === "ok") {
+          setDbLayer(data.useFirestore ? "firestore" : "sql");
+        }
+      } catch (err) {
+        setDbLayer("firestore");
+      }
+    };
+    fetchDbStatus();
+
+    const handleOnline = async () => {
+      setIsOnline(true);
+      setToastNotification({
+        type: "success",
+        message: "Network uplink re-established! Synchronizing pending changes..."
+      });
+      checkConnection();
+    };
+    const handleOffline = () => {
+      setIsOnline(false);
+      setOfflineBannerDismissed(false);
+      setToastNotification({
+        type: "warning",
+        message: "Offline Mode Active: Changes are saved locally and will auto-sync when online."
+      });
+    };
+
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
+
+    // Initial connection check
+    checkConnection();
+
+    // Heartbeat connection check every 25 seconds
+    const interval = setInterval(() => {
+      checkConnection();
+    }, 25000);
+
+    return () => {
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
+      clearInterval(interval);
+    };
+  }, []);
+
+  // Automatic sync when coming back online
+  useEffect(() => {
+    if (effectiveOnline && offlineQueue.length > 0 && !isSyncing) {
+      syncOfflineQueue();
+    }
+  }, [effectiveOnline, offlineQueue.length]);
+
+  // Toast auto-dismiss timer
+  useEffect(() => {
+    if (!toastNotification) return;
+    const timer = setTimeout(() => {
+      setToastNotification(null);
+    }, 4500);
+    return () => clearTimeout(timer);
+  }, [toastNotification]);
 
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [activeTab, setActiveTab] = useState<"dashboard" | "logs" | "bikes" | "spares" | "users" | "requests">("dashboard");
@@ -869,6 +1121,41 @@ export default function App() {
     if (!user) return;
 
     const matchingBike = bikesList.find(b => String(b.id) === String(requestForm.bikeId));
+
+    if (!effectiveOnline) {
+      const tempId = Math.floor(100000 + Math.random() * 900000);
+      const newRequest: ServiceRequestType = {
+        id: tempId,
+        bikeId: parseInt(requestForm.bikeId),
+        bikeReg: matchingBike?.regNo || "Unknown",
+        requestedBy: user.displayName || user.email || "Offline User",
+        serviceType: requestForm.serviceType,
+        problemDescription: requestForm.problemDescription,
+        status: "pending",
+        dateRequested: new Date().toISOString().split("T")[0],
+        createdAt: new Date().toISOString()
+      };
+      setRequestsList(prev => {
+        const list = [newRequest, ...prev];
+        saveToStorage("requests", list);
+        return list;
+      });
+      enqueueOfflineAction({
+        id: `request-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
+        type: 'request',
+        action: 'create',
+        data: newRequest,
+        targetId: tempId,
+        timestamp: Date.now(),
+        description: `Service request for ${newRequest.bikeReg}: ${newRequest.serviceType}`
+      });
+      setRequestModalOpen(false);
+      setToastNotification({
+        type: "info",
+        message: `Service request for ${newRequest.bikeReg} saved offline. Will auto-sync when online.`
+      });
+      return;
+    }
     
     try {
       const nextId = await getNextId('service_requests');
@@ -885,14 +1172,67 @@ export default function App() {
 
       setRequestModalOpen(false);
     } catch (err) {
-      console.error("Error saving request:", err);
-      alert("Failed to submit service request");
+      console.warn("Online request save failed, queuing offline:", err);
+      const tempId = Math.floor(100000 + Math.random() * 900000);
+      const newRequest: ServiceRequestType = {
+        id: tempId,
+        bikeId: parseInt(requestForm.bikeId),
+        bikeReg: matchingBike?.regNo || "Unknown",
+        requestedBy: user.displayName || user.email || "Offline User",
+        serviceType: requestForm.serviceType,
+        problemDescription: requestForm.problemDescription,
+        status: "pending",
+        dateRequested: new Date().toISOString().split("T")[0],
+        createdAt: new Date().toISOString()
+      };
+      setRequestsList(prev => {
+        const list = [newRequest, ...prev];
+        saveToStorage("requests", list);
+        return list;
+      });
+      enqueueOfflineAction({
+        id: `request-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
+        type: 'request',
+        action: 'create',
+        data: newRequest,
+        targetId: tempId,
+        timestamp: Date.now(),
+        description: `Service request for ${newRequest.bikeReg}: ${newRequest.serviceType}`
+      });
+      setRequestModalOpen(false);
+      setToastNotification({
+        type: "warning",
+        message: "Network interrupted: Service request saved locally for auto-sync."
+      });
     }
   };
 
   const handleDeleteRequest = async (requestId: number) => {
     if (!user) return;
     if (!confirm("Are you sure you want to cancel this service request?")) return;
+
+    if (!effectiveOnline) {
+      setRequestsList(prev => {
+        const list = prev.filter(r => r.id !== requestId);
+        saveToStorage("requests", list);
+        return list;
+      });
+      enqueueOfflineAction({
+        id: `request-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
+        type: 'request',
+        action: 'delete',
+        data: {},
+        targetId: requestId,
+        timestamp: Date.now(),
+        description: `Cancelled request #${requestId}`
+      });
+      setToastNotification({
+        type: "info",
+        message: `Service request #${requestId} cancelled locally in offline mode.`
+      });
+      return;
+    }
+
     try {
       const q = query(collection(db, 'service_requests'), where('id', '==', requestId));
       const snap = await getDocs(q);
@@ -900,7 +1240,25 @@ export default function App() {
         await deleteDoc(doc(db, 'service_requests', snap.docs[0].id));
       }
     } catch (err) {
-      console.error("Error deleting request:", err);
+      console.warn("Delete request online failed, queuing offline:", err);
+      setRequestsList(prev => {
+        const list = prev.filter(r => r.id !== requestId);
+        saveToStorage("requests", list);
+        return list;
+      });
+      enqueueOfflineAction({
+        id: `request-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
+        type: 'request',
+        action: 'delete',
+        data: {},
+        targetId: requestId,
+        timestamp: Date.now(),
+        description: `Cancelled request #${requestId}`
+      });
+      setToastNotification({
+        type: "warning",
+        message: "Offline cancellation recorded. Will sync when online."
+      });
     }
   };
 
@@ -993,10 +1351,59 @@ export default function App() {
     e.preventDefault();
     if (!user) return;
 
+    if (!effectiveOnline) {
+      if (editingBike) {
+        const updatedBike: BikeType = { ...editingBike, ...bikeForm };
+        setBikesList(prev => {
+          const list = prev.map(b => b.id === editingBike.id ? updatedBike : b);
+          saveToStorage("bikes", list);
+          return list;
+        });
+        enqueueOfflineAction({
+          id: `bike-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
+          type: 'bike',
+          action: 'update',
+          data: bikeForm,
+          targetId: editingBike.id,
+          timestamp: Date.now(),
+          description: `Updated motorcycle ${bikeForm.regNo || editingBike.regNo}`
+        });
+        setToastNotification({
+          type: "info",
+          message: `Bike ${updatedBike.regNo} updated locally in offline mode.`
+        });
+      } else {
+        const tempId = Math.floor(100000 + Math.random() * 900000);
+        const newBike: BikeType = {
+          ...bikeForm,
+          id: tempId,
+          dateAdded: new Date().toISOString().split("T")[0]
+        };
+        setBikesList(prev => {
+          const list = [newBike, ...prev];
+          saveToStorage("bikes", list);
+          return list;
+        });
+        enqueueOfflineAction({
+          id: `bike-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
+          type: 'bike',
+          action: 'create',
+          data: newBike,
+          targetId: tempId,
+          timestamp: Date.now(),
+          description: `Registered motorcycle ${newBike.regNo}`
+        });
+        setToastNotification({
+          type: "info",
+          message: `Bike ${newBike.regNo} saved locally in offline mode.`
+        });
+      }
+      setBikeModalOpen(false);
+      return;
+    }
+
     try {
       if (editingBike) {
-        // Update in Firestore
-        // We need to find the document with the matching 'id' field, or use the doc ID if it was stored
         const q = query(collection(db, 'bikes'), where('id', '==', editingBike.id));
         const snap = await getDocs(q);
         if (!snap.empty) {
@@ -1006,7 +1413,6 @@ export default function App() {
           });
         }
       } else {
-        // Create in Firestore
         const nextId = await getNextId('bikes');
         await addDoc(collection(db, 'bikes'), {
           ...bikeForm,
@@ -1017,14 +1423,79 @@ export default function App() {
 
       setBikeModalOpen(false);
     } catch (err: any) {
-      console.error("Error saving bike:", err);
-      alert(err.message || "Failed to save bike");
+      console.warn("Error saving bike online, queuing offline:", err);
+      if (editingBike) {
+        const updatedBike: BikeType = { ...editingBike, ...bikeForm };
+        setBikesList(prev => {
+          const list = prev.map(b => b.id === editingBike.id ? updatedBike : b);
+          saveToStorage("bikes", list);
+          return list;
+        });
+        enqueueOfflineAction({
+          id: `bike-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
+          type: 'bike',
+          action: 'update',
+          data: bikeForm,
+          targetId: editingBike.id,
+          timestamp: Date.now(),
+          description: `Updated motorcycle ${bikeForm.regNo || editingBike.regNo}`
+        });
+      } else {
+        const tempId = Math.floor(100000 + Math.random() * 900000);
+        const newBike: BikeType = {
+          ...bikeForm,
+          id: tempId,
+          dateAdded: new Date().toISOString().split("T")[0]
+        };
+        setBikesList(prev => {
+          const list = [newBike, ...prev];
+          saveToStorage("bikes", list);
+          return list;
+        });
+        enqueueOfflineAction({
+          id: `bike-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
+          type: 'bike',
+          action: 'create',
+          data: newBike,
+          targetId: tempId,
+          timestamp: Date.now(),
+          description: `Registered motorcycle ${newBike.regNo}`
+        });
+      }
+      setBikeModalOpen(false);
+      setToastNotification({
+        type: "warning",
+        message: "Network interrupted: Bike details saved locally for auto-sync."
+      });
     }
   };
 
   const handleDeleteBike = async (id: number) => {
     if (!user) return;
     if (!confirm("Are you sure you want to decommission this bike from the registry?")) return;
+
+    if (!effectiveOnline) {
+      setBikesList(prev => {
+        const list = prev.filter(b => b.id !== id);
+        saveToStorage("bikes", list);
+        return list;
+      });
+      enqueueOfflineAction({
+        id: `bike-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
+        type: 'bike',
+        action: 'delete',
+        data: {},
+        targetId: id,
+        timestamp: Date.now(),
+        description: `Decommissioned bike #${id}`
+      });
+      setToastNotification({
+        type: "info",
+        message: `Bike #${id} decommissioned locally in offline mode.`
+      });
+      return;
+    }
+
     try {
       const q = query(collection(db, 'bikes'), where('id', '==', id));
       const snap = await getDocs(q);
@@ -1032,7 +1503,25 @@ export default function App() {
         await deleteDoc(doc(db, 'bikes', snap.docs[0].id));
       }
     } catch (err) {
-      console.error("Error deleting bike:", err);
+      console.warn("Delete bike online failed, queuing offline:", err);
+      setBikesList(prev => {
+        const list = prev.filter(b => b.id !== id);
+        saveToStorage("bikes", list);
+        return list;
+      });
+      enqueueOfflineAction({
+        id: `bike-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
+        type: 'bike',
+        action: 'delete',
+        data: {},
+        targetId: id,
+        timestamp: Date.now(),
+        description: `Decommissioned bike #${id}`
+      });
+      setToastNotification({
+        type: "warning",
+        message: "Offline decommissioning recorded. Will sync when online."
+      });
     }
   };
 
@@ -1072,6 +1561,58 @@ export default function App() {
       }
     }
 
+    if (!effectiveOnline) {
+      if (editingSpare) {
+        const updatedSpare: SpareInventoryType = { ...editingSpare, ...spareForm };
+        setSparesList(prev => {
+          const list = prev.map(s => s.id === editingSpare.id ? updatedSpare : s);
+          saveToStorage("spares", list);
+          return list;
+        });
+        enqueueOfflineAction({
+          id: `spare-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
+          type: 'spare',
+          action: 'update',
+          data: spareForm,
+          targetId: editingSpare.id,
+          timestamp: Date.now(),
+          description: `Updated spare: ${spareForm.name}`
+        });
+        setToastNotification({
+          type: "info",
+          message: `Spare "${spareForm.name}" updated locally in offline mode.`
+        });
+      } else {
+        const tempId = Math.floor(100000 + Math.random() * 900000);
+        const newSpare: SpareInventoryType = {
+          ...spareForm,
+          id: tempId,
+          addedBy: user.displayName || user.email || "Offline User",
+          dateAdded: new Date().toISOString().split("T")[0]
+        };
+        setSparesList(prev => {
+          const list = [newSpare, ...prev];
+          saveToStorage("spares", list);
+          return list;
+        });
+        enqueueOfflineAction({
+          id: `spare-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
+          type: 'spare',
+          action: 'create',
+          data: newSpare,
+          targetId: tempId,
+          timestamp: Date.now(),
+          description: `Added ${newSpare.name} (${newSpare.quantity} units @ ZMK ${newSpare.unitPrice})`
+        });
+        setToastNotification({
+          type: "info",
+          message: `Spare "${newSpare.name}" saved locally in offline mode.`
+        });
+      }
+      setSpareModalOpen(false);
+      return;
+    }
+
     try {
       if (editingSpare) {
         const q = query(collection(db, 'spares'), where('id', '==', editingSpare.id));
@@ -1094,14 +1635,80 @@ export default function App() {
 
       setSpareModalOpen(false);
     } catch (err) {
-      console.error("Error saving spare:", err);
-      alert("Failed to save spare inventory entry");
+      console.warn("Error saving spare online, falling back to offline queue:", err);
+      if (editingSpare) {
+        const updatedSpare: SpareInventoryType = { ...editingSpare, ...spareForm };
+        setSparesList(prev => {
+          const list = prev.map(s => s.id === editingSpare.id ? updatedSpare : s);
+          saveToStorage("spares", list);
+          return list;
+        });
+        enqueueOfflineAction({
+          id: `spare-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
+          type: 'spare',
+          action: 'update',
+          data: spareForm,
+          targetId: editingSpare.id,
+          timestamp: Date.now(),
+          description: `Updated spare: ${spareForm.name}`
+        });
+      } else {
+        const tempId = Math.floor(100000 + Math.random() * 900000);
+        const newSpare: SpareInventoryType = {
+          ...spareForm,
+          id: tempId,
+          addedBy: user.displayName || user.email || "Offline User",
+          dateAdded: new Date().toISOString().split("T")[0]
+        };
+        setSparesList(prev => {
+          const list = [newSpare, ...prev];
+          saveToStorage("spares", list);
+          return list;
+        });
+        enqueueOfflineAction({
+          id: `spare-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
+          type: 'spare',
+          action: 'create',
+          data: newSpare,
+          targetId: tempId,
+          timestamp: Date.now(),
+          description: `Added ${newSpare.name} (${newSpare.quantity} units)`
+        });
+      }
+      setSpareModalOpen(false);
+      setToastNotification({
+        type: "warning",
+        message: "Network interrupted: Spare part saved locally for offline sync."
+      });
     }
   };
 
   const handleDeleteSpare = async (id: number) => {
     if (!user) return;
     if (!confirm("Are you sure you want to remove this item from the inventory?")) return;
+
+    if (!effectiveOnline) {
+      setSparesList(prev => {
+        const list = prev.filter(s => s.id !== id);
+        saveToStorage("spares", list);
+        return list;
+      });
+      enqueueOfflineAction({
+        id: `spare-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
+        type: 'spare',
+        action: 'delete',
+        data: {},
+        targetId: id,
+        timestamp: Date.now(),
+        description: `Removed spare #${id} from inventory`
+      });
+      setToastNotification({
+        type: "info",
+        message: `Spare #${id} removed locally in offline mode.`
+      });
+      return;
+    }
+
     try {
       const q = query(collection(db, 'spares'), where('id', '==', id));
       const snap = await getDocs(q);
@@ -1109,7 +1716,25 @@ export default function App() {
         await deleteDoc(doc(db, 'spares', snap.docs[0].id));
       }
     } catch (err) {
-      console.error("Error deleting spare:", err);
+      console.warn("Delete spare online failed, queuing offline:", err);
+      setSparesList(prev => {
+        const list = prev.filter(s => s.id !== id);
+        saveToStorage("spares", list);
+        return list;
+      });
+      enqueueOfflineAction({
+        id: `spare-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
+        type: 'spare',
+        action: 'delete',
+        data: {},
+        targetId: id,
+        timestamp: Date.now(),
+        description: `Removed spare #${id} from inventory`
+      });
+      setToastNotification({
+        type: "warning",
+        message: "Offline removal recorded. Will sync when online."
+      });
     }
   };
 
@@ -1168,6 +1793,128 @@ export default function App() {
       return;
     }
 
+    const matchingBike = bikesList.find(b => String(b.id) === String(logForm.bikeId));
+    const sparesToLog = logForm.sparesUsed.map(s => {
+      const spareInfo = sparesList.find(sl => String(sl.id) === s.spareId);
+      return { 
+        id: Math.floor(100000 + Math.random() * 900000),
+        serviceLogId: editingLog ? editingLog.id : 0,
+        spareId: s.spareId === "new" ? "new" : parseInt(s.spareId), 
+        spareName: s.spareName || spareInfo?.name || `Spare ID ${s.spareId}`,
+        quantity: Number(s.quantity) || 1,
+        priceAtTime: Number(s.priceAtTime) || Number(spareInfo?.unitPrice) || 0
+      };
+    });
+
+    if (!effectiveOnline) {
+      if (editingLog) {
+        const updatedLog: ServiceLogType = {
+          ...editingLog,
+          bikeId: parseInt(logForm.bikeId),
+          bikeReg: matchingBike?.regNo || editingLog.bikeReg || `Bike #${logForm.bikeId}`,
+          date: logForm.date,
+          nextServiceDate: logForm.nextServiceDate || null,
+          nextServiceMileage: logForm.nextServiceMileage ? parseInt(logForm.nextServiceMileage) : null,
+          mileage: parseInt(logForm.mileage) || 0,
+          officer: logForm.officer,
+          province: logForm.province,
+          district: logForm.district,
+          workDone: logForm.workDone || null,
+          workPending: logForm.workPending || null,
+          comment: logForm.comment || null,
+          status: logForm.status,
+          spares: sparesToLog
+        };
+        setLogsList(prev => {
+          const list = prev.map(l => l.id === editingLog.id ? updatedLog : l);
+          saveToStorage("logs", list);
+          return list;
+        });
+        enqueueOfflineAction({
+          id: `log-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
+          type: 'log',
+          action: 'update',
+          data: {
+            bikeId: parseInt(logForm.bikeId),
+            date: logForm.date,
+            nextServiceDate: logForm.nextServiceDate || null,
+            nextServiceMileage: logForm.nextServiceMileage ? parseInt(logForm.nextServiceMileage) : null,
+            mileage: parseInt(logForm.mileage),
+            officer: logForm.officer,
+            province: logForm.province,
+            district: logForm.district,
+            workDone: logForm.workDone || null,
+            workPending: logForm.workPending || null,
+            comment: logForm.comment || null,
+            status: logForm.status,
+            spares: sparesToLog
+          },
+          targetId: editingLog.id,
+          timestamp: Date.now(),
+          description: `Updated log for ${updatedLog.bikeReg}`
+        });
+        setToastNotification({
+          type: "info",
+          message: `Service record for ${updatedLog.bikeReg} updated locally in offline mode.`
+        });
+      } else {
+        const tempId = Math.floor(100000 + Math.random() * 900000);
+        const newLog: ServiceLogType = {
+          id: tempId,
+          bikeId: parseInt(logForm.bikeId),
+          bikeReg: matchingBike?.regNo || `Bike #${logForm.bikeId}`,
+          date: logForm.date,
+          nextServiceDate: logForm.nextServiceDate || null,
+          nextServiceMileage: logForm.nextServiceMileage ? parseInt(logForm.nextServiceMileage) : null,
+          mileage: parseInt(logForm.mileage) || 0,
+          officer: logForm.officer,
+          province: logForm.province,
+          district: logForm.district,
+          workDone: logForm.workDone || null,
+          workPending: logForm.workPending || null,
+          comment: logForm.comment || null,
+          status: logForm.status,
+          spares: sparesToLog.map(s => ({ ...s, serviceLogId: tempId }))
+        };
+
+        // Deduct spare stock locally in state and cache
+        setSparesList(prev => {
+          const list = prev.map(spare => {
+            const used = sparesToLog.find(s => String(s.spareId) === String(spare.id));
+            if (used) {
+              return { ...spare, quantity: Math.max(0, spare.quantity - used.quantity) };
+            }
+            return spare;
+          });
+          saveToStorage("spares", list);
+          return list;
+        });
+
+        setLogsList(prev => {
+          const list = [newLog, ...prev];
+          saveToStorage("logs", list);
+          return list;
+        });
+
+        enqueueOfflineAction({
+          id: `log-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
+          type: 'log',
+          action: 'create',
+          data: newLog,
+          targetId: tempId,
+          timestamp: Date.now(),
+          description: `Logged maintenance for ${newLog.bikeReg} (${logForm.status.toUpperCase()})`
+        });
+
+        setToastNotification({
+          type: "info",
+          message: `Maintenance log for ${newLog.bikeReg} saved offline. Stock adjusted.`
+        });
+      }
+      setLogModalOpen(false);
+      return;
+    }
+
     try {
       if (editingLog) {
         const q = query(collection(db, 'service_logs'), where('id', '==', editingLog.id));
@@ -1187,29 +1934,11 @@ export default function App() {
             workPending: logForm.workPending || null,
             comment: logForm.comment || null,
             status: logForm.status,
-            spares: logForm.sparesUsed.map(s => {
-              const spareInfo = sparesList.find(sl => String(sl.id) === s.spareId);
-              return { 
-                spareId: s.spareId === "new" ? "new" : parseInt(s.spareId), 
-                spareName: s.spareName || spareInfo?.name || `Spare ID ${s.spareId}`,
-                quantity: s.quantity,
-                priceAtTime: s.priceAtTime || spareInfo?.unitPrice || 0
-              };
-            })
+            spares: sparesToLog
           });
         }
       } else {
         const nextId = await getNextId('service_logs');
-        const sparesToLog = logForm.sparesUsed.map(s => {
-          const spareInfo = sparesList.find(sl => String(sl.id) === s.spareId);
-          return { 
-            spareId: s.spareId === "new" ? "new" : parseInt(s.spareId), 
-            spareName: s.spareName || spareInfo?.name || `Spare ID ${s.spareId}`,
-            quantity: s.quantity,
-            priceAtTime: s.priceAtTime || spareInfo?.unitPrice || 0
-          };
-        });
-
         await runTransaction(db, async (transaction) => {
           // 1. Create Log
           const logRef = doc(collection(db, 'service_logs'));
@@ -1240,7 +1969,7 @@ export default function App() {
                const spareDoc = sSnap.docs[0];
                const currentQty = spareDoc.data().quantity || 0;
                transaction.update(doc(db, 'spares', spareDoc.id), {
-                 quantity: currentQty - item.quantity
+                 quantity: Math.max(0, currentQty - item.quantity)
                });
              }
           }
@@ -1249,14 +1978,76 @@ export default function App() {
 
       setLogModalOpen(false);
     } catch (err: any) {
-      console.error("Error saving log:", err);
-      alert(err.message || "Failed to save service log entry");
+      console.warn("Online save log failed, falling back to offline queue:", err);
+      const tempId = Math.floor(100000 + Math.random() * 900000);
+      const newLog: ServiceLogType = {
+        id: tempId,
+        bikeId: parseInt(logForm.bikeId),
+        bikeReg: matchingBike?.regNo || `Bike #${logForm.bikeId}`,
+        date: logForm.date,
+        nextServiceDate: logForm.nextServiceDate || null,
+        nextServiceMileage: logForm.nextServiceMileage ? parseInt(logForm.nextServiceMileage) : null,
+        mileage: parseInt(logForm.mileage) || 0,
+        officer: logForm.officer,
+        province: logForm.province,
+        district: logForm.district,
+        workDone: logForm.workDone || null,
+        workPending: logForm.workPending || null,
+        comment: logForm.comment || null,
+        status: logForm.status,
+        spares: sparesToLog.map(s => ({ ...s, serviceLogId: tempId }))
+      };
+
+      setLogsList(prev => {
+        const list = [newLog, ...prev];
+        saveToStorage("logs", list);
+        return list;
+      });
+
+      enqueueOfflineAction({
+        id: `log-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
+        type: 'log',
+        action: 'create',
+        data: newLog,
+        targetId: tempId,
+        timestamp: Date.now(),
+        description: `Logged maintenance for ${newLog.bikeReg}`
+      });
+
+      setLogModalOpen(false);
+      setToastNotification({
+        type: "warning",
+        message: "Network interrupted: Service log saved offline. Queued for auto-sync."
+      });
     }
   };
 
   const handleDeleteLog = async (id: number) => {
     if (!user) return;
     if (!confirm("Are you sure you want to delete this maintenance record? Inventory will not be automatically restored.")) return;
+
+    if (!effectiveOnline) {
+      setLogsList(prev => {
+        const list = prev.filter(l => l.id !== id);
+        saveToStorage("logs", list);
+        return list;
+      });
+      enqueueOfflineAction({
+        id: `log-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
+        type: 'log',
+        action: 'delete',
+        data: {},
+        targetId: id,
+        timestamp: Date.now(),
+        description: `Deleted service log #${id}`
+      });
+      setToastNotification({
+        type: "info",
+        message: `Service log #${id} deleted locally in offline mode.`
+      });
+      return;
+    }
+
     try {
       const q = query(collection(db, 'service_logs'), where('id', '==', id));
       const snap = await getDocs(q);
@@ -1264,7 +2055,25 @@ export default function App() {
         await deleteDoc(doc(db, 'service_logs', snap.docs[0].id));
       }
     } catch (err) {
-      console.error("Error deleting service log:", err);
+      console.warn("Delete log failed, queuing offline:", err);
+      setLogsList(prev => {
+        const list = prev.filter(l => l.id !== id);
+        saveToStorage("logs", list);
+        return list;
+      });
+      enqueueOfflineAction({
+        id: `log-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
+        type: 'log',
+        action: 'delete',
+        data: {},
+        targetId: id,
+        timestamp: Date.now(),
+        description: `Deleted service log #${id}`
+      });
+      setToastNotification({
+        type: "warning",
+        message: "Record removed locally. Deletion queued for offline sync."
+      });
     }
   };
 
@@ -1342,6 +2151,26 @@ export default function App() {
     return acc + log.spares.reduce((sum, s) => sum + s.quantity, 0);
   }, 0);
 
+  // Unified service log cost calculator ensuring consistent mathematics across dashboard & tables
+  const calculateLogCost = (log: ServiceLogType, currentSpares: SpareInventoryType[] = sparesList): number => {
+    if (!log) return 0;
+    let partsCost = 0;
+    if (log.spares && Array.isArray(log.spares)) {
+      for (const s of log.spares) {
+        let price = Number(s.priceAtTime) || 0;
+        if (price <= 0 && s.spareId && String(s.spareId) !== "new") {
+          const found = currentSpares.find(sl => String(sl.id) === String(s.spareId));
+          if (found && Number(found.unitPrice) > 0) {
+            price = Number(found.unitPrice);
+          }
+        }
+        partsCost += (Number(s.quantity) || 0) * price;
+      }
+    }
+    const directCost = Number((log as any).cost || (log as any).totalCost || 0);
+    return partsCost + directCost;
+  };
+
   // Spares inventory procurement expenditure
   const totalInventoryExpenditure = useMemo(() => {
     return sparesList.reduce((acc, s) => {
@@ -1354,16 +2183,7 @@ export default function App() {
   // Maintenance service logs expenditure (parts used in logs + direct costs)
   const totalLogsExpenditure = useMemo(() => {
     return logsList.reduce((acc, log) => {
-      const sparesCost = log.spares ? log.spares.reduce((sum, s) => {
-        let price = Number(s.priceAtTime) || 0;
-        if (price === 0 && String(s.spareId) !== "new" && s.spareId !== null) {
-          const currentSpare = sparesList.find(sl => String(sl.id) === String(s.spareId));
-          price = Number(currentSpare?.unitPrice) || 0;
-        }
-        return sum + ((Number(s.quantity) || 0) * price);
-      }, 0) : 0;
-      const directCost = Number((log as any).cost || (log as any).totalCost || 0);
-      return acc + sparesCost + directCost;
+      return acc + calculateLogCost(log, sparesList);
     }, 0);
   }, [logsList, sparesList]);
 
@@ -1396,21 +2216,12 @@ export default function App() {
       if (isNaN(dateObj.getTime())) return;
       const monthYear = dateObj.toLocaleDateString('en-US', { month: 'short', year: '2-digit' });
       
-      const logCost = log.spares ? log.spares.reduce((sum, s) => {
-        let price = Number(s.priceAtTime) || 0;
-        if (price === 0 && String(s.spareId) !== "new" && s.spareId !== null) {
-          const currentSpare = sparesList.find(sl => String(sl.id) === String(s.spareId));
-          price = Number(currentSpare?.unitPrice) || 0;
-        }
-        return sum + ((Number(s.quantity) || 0) * price);
-      }, 0) : 0;
-      
-      const directCost = Number((log as any).cost || (log as any).totalCost || 0);
+      const logCost = calculateLogCost(log, sparesList);
 
       if (!monthlyData[monthYear]) {
         monthlyData[monthYear] = 0;
       }
-      monthlyData[monthYear] += (logCost + directCost);
+      monthlyData[monthYear] += logCost;
     });
 
     const sortedKeys = Object.keys(monthlyData).sort((a, b) => {
@@ -1488,15 +2299,7 @@ export default function App() {
         slot.count += 1;
         if (log.bikeReg) slot.bikesServiced.add(log.bikeReg);
         if (log.spares && log.spares.length > 0) {
-          const sparesCost = log.spares.reduce((sum, s) => {
-            let price = Number(s.priceAtTime) || 0;
-            if (price === 0 && String(s.spareId) !== "new" && s.spareId !== null) {
-              const currentSpare = sparesList.find(sl => String(sl.id) === String(s.spareId));
-              price = Number(currentSpare?.unitPrice) || 0;
-            }
-            return sum + (Number(s.quantity) * price);
-          }, 0);
-          slot.cost += sparesCost;
+          slot.cost += calculateLogCost(log, sparesList);
         }
       }
     });
@@ -1763,6 +2566,11 @@ export default function App() {
 
     return matchesSearch && matchesStatus && matchesDistrict;
   });
+
+  // Total expenditure of filtered service logs currently viewed in the table
+  const filteredLogsTotal = useMemo(() => {
+    return filteredLogs.reduce((acc, log) => acc + calculateLogCost(log, sparesList), 0);
+  }, [filteredLogs, sparesList]);
 
   // Pre-load distinct districts in the service log filters based on registered bikes
   const distinctDistricts = Array.from(new Set(bikesList.map(b => b.district))).sort();
@@ -2186,21 +2994,36 @@ export default function App() {
           </div>
 
           <div className="flex items-center gap-3">
-            {/* Real-Time Live Sync Status Indicator */}
-            <div className="flex items-center gap-3 px-3 py-1.5 bg-white border border-emerald-500/10 rounded-xl shadow-sm">
+            {/* Interactive Real-Time / Offline Sync Status Indicator */}
+            <button
+              onClick={() => setSyncModalOpen(true)}
+              className={`flex items-center gap-2.5 px-3 py-1.5 rounded-xl border shadow-sm transition-all cursor-pointer group ${
+                effectiveOnline 
+                  ? "bg-white hover:bg-emerald-50/50 border-emerald-500/20 text-slate-700" 
+                  : "bg-amber-50 hover:bg-amber-100/70 border-amber-300 text-amber-900"
+              }`}
+              title="Click to open Offline & Synchronization Center"
+            >
               <span className="relative flex h-2 w-2">
-                <span className={`animate-ping absolute inline-flex h-full w-full rounded-full opacity-75 ${isOnline ? "bg-emerald-400" : "bg-amber-400"}`}></span>
-                <span className={`relative inline-flex rounded-full h-2 w-2 ${isOnline ? "bg-emerald-500" : "bg-amber-500"}`}></span>
+                <span className={`animate-ping absolute inline-flex h-full w-full rounded-full opacity-75 ${effectiveOnline ? "bg-emerald-400" : "bg-amber-400"}`}></span>
+                <span className={`relative inline-flex rounded-full h-2 w-2 ${effectiveOnline ? "bg-emerald-500" : "bg-amber-500"}`}></span>
               </span>
               <div className="flex flex-col text-left">
-                <span className={`text-[9px] font-black uppercase tracking-widest leading-none ${isOnline ? "text-emerald-600" : "text-amber-600"}`}>
-                  {isOnline ? "System Uplink" : "Offline Mode"}
-                </span>
-                <span className="text-[8px] text-slate-500 font-bold uppercase tracking-tighter leading-none mt-1">
-                  Real-time Data Active
+                <div className="flex items-center gap-1.5">
+                  <span className={`text-[9px] font-black uppercase tracking-widest leading-none ${effectiveOnline ? "text-emerald-700" : "text-amber-700"}`}>
+                    {effectiveOnline ? "Online" : "Offline Mode"}
+                  </span>
+                  {offlineQueue.length > 0 && (
+                    <span className="px-1.5 py-0.2 bg-amber-500 text-white rounded-full text-[8px] font-black leading-none">
+                      {offlineQueue.length}
+                    </span>
+                  )}
+                </div>
+                <span className="text-[8px] text-slate-500 font-bold uppercase tracking-tighter leading-none mt-1 group-hover:text-emerald-700 transition-colors">
+                  {isSyncing ? "Syncing..." : (effectiveOnline ? (connectionLatency ? `${connectionLatency}ms ping` : "Live Uplink") : `${offlineQueue.length} unsynced`)}
                 </span>
               </div>
-            </div>
+            </button>
 
             <button
               onClick={() => window.location.reload()}
@@ -2270,6 +3093,46 @@ export default function App() {
 
         {/* Content Body */}
         <main className="flex-1 p-6 overflow-y-auto">
+          {/* Offline Status & Pending Sync Banner */}
+          {!effectiveOnline && !offlineBannerDismissed && (
+            <div className="mb-6 bg-gradient-to-r from-amber-500/10 via-amber-500/5 to-transparent border border-amber-500/30 rounded-2xl p-4 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 shadow-sm animate-in fade-in slide-in-from-top-2 duration-300">
+              <div className="flex items-center gap-3.5">
+                <div className="w-10 h-10 rounded-xl bg-amber-500/20 text-amber-700 flex items-center justify-center flex-shrink-0">
+                  <WifiOff className="w-5 h-5" />
+                </div>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <h4 className="text-xs font-black text-amber-950 uppercase tracking-wider">
+                      {isSimulatedOffline ? "Simulated Offline Mode Active" : "Offline Mode Active"}
+                    </h4>
+                    {offlineQueue.length > 0 && (
+                      <span className="px-2 py-0.5 rounded-full bg-amber-500 text-white font-black text-[9px] uppercase tracking-wider">
+                        {offlineQueue.length} Pending {offlineQueue.length === 1 ? 'Action' : 'Actions'}
+                      </span>
+                    )}
+                  </div>
+                  <p className="text-[11px] text-amber-900/80 mt-0.5 font-medium">
+                    You have complete offline access. Log services, track spares, and manage fleet records seamlessly. All changes are stored locally and will synchronize automatically when online.
+                  </p>
+                </div>
+              </div>
+              <div className="flex items-center gap-2 w-full sm:w-auto justify-end flex-shrink-0">
+                <button
+                  onClick={() => setSyncModalOpen(true)}
+                  className="px-3 py-1.5 bg-amber-600 hover:bg-amber-700 text-white text-xs font-bold rounded-xl transition-colors cursor-pointer shadow-sm flex items-center gap-1.5"
+                >
+                  <Database className="w-3.5 h-3.5" /> Sync Center
+                </button>
+                <button
+                  onClick={() => setOfflineBannerDismissed(true)}
+                  className="p-1.5 text-amber-700 hover:text-amber-900 hover:bg-amber-200/50 rounded-lg transition-colors cursor-pointer"
+                  title="Dismiss banner"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+            </div>
+          )}
           
           {/* ==================== DASHBOARD VIEW ==================== */}
           {activeTab === "dashboard" && (
@@ -2347,27 +3210,44 @@ export default function App() {
                   animate={{ opacity: 1, y: 0 }}
                   key={`expenditure-${totalExpenditure}`} // Force re-animation on value change for feedback
                   transition={{ type: "spring", stiffness: 300, damping: 25 }}
-                  className="bg-white p-6 rounded-2xl border border-emerald-500/10 shadow-sm flex items-center gap-4 hover:border-emerald-500/30 transition-colors group"
+                  onClick={() => setExpenditureModalOpen(true)}
+                  className="bg-white p-6 rounded-2xl border border-emerald-500/10 shadow-sm flex flex-col justify-between hover:border-emerald-500/30 transition-all group cursor-pointer hover:shadow-md"
+                  title="Click to view itemized expenditure accounting breakdown"
                 >
-                  <div className="w-13 h-13 min-w-[52px] bg-emerald-50 text-emerald-700 border border-emerald-200/60 rounded-xl group-hover:scale-110 transition-transform shadow-sm flex flex-col items-center justify-center">
-                    <span className="text-xs font-black text-emerald-700 tracking-tighter leading-none">ZMK</span>
-                    <span className="text-[8px] font-extrabold text-emerald-600/80 uppercase tracking-widest leading-none mt-0.5">Kwacha</span>
+                  <div className="flex items-center gap-4">
+                    <div className="w-13 h-13 min-w-[52px] bg-emerald-50 text-emerald-700 border border-emerald-200/60 rounded-xl group-hover:scale-110 transition-transform shadow-sm flex flex-col items-center justify-center">
+                      <span className="text-xs font-black text-emerald-700 tracking-tighter leading-none">ZMK</span>
+                      <span className="text-[8px] font-extrabold text-emerald-600/80 uppercase tracking-widest leading-none mt-0.5">Kwacha</span>
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center justify-between">
+                        <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest truncate">Total Expenditure</p>
+                        <span className="text-[9px] text-emerald-700 font-bold bg-emerald-50 px-1.5 py-0.5 rounded border border-emerald-200/60 flex items-center gap-1 group-hover:bg-emerald-600 group-hover:text-white transition-colors">
+                          <Info className="w-2.5 h-2.5" /> Details
+                        </span>
+                      </div>
+                      <h3 className="text-2xl font-black text-slate-800 mt-0.5 tracking-tight flex items-baseline">
+                        <span className="text-xs font-bold mr-1 italic text-emerald-600">ZMK</span>
+                        <motion.span
+                          initial={{ opacity: 0.5 }}
+                          animate={{ opacity: 1 }}
+                          transition={{ duration: 0.5 }}
+                        >
+                          {totalExpenditure.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                        </motion.span>
+                      </h3>
+                    </div>
                   </div>
-                  <div className="min-w-0">
-                    <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest truncate">Total Expenditure</p>
-                    <h3 className="text-2xl font-black text-slate-800 mt-0.5 tracking-tight flex items-baseline">
-                      <span className="text-xs font-bold mr-1 italic text-emerald-600">ZMK</span>
-                      <motion.span
-                        initial={{ opacity: 0.5 }}
-                        animate={{ opacity: 1 }}
-                        transition={{ duration: 0.5 }}
-                      >
-                        {totalExpenditure.toLocaleString(undefined, { minimumFractionDigits: 2 })}
-                      </motion.span>
-                    </h3>
-                    <p className="text-[9px] text-slate-500 font-semibold mt-0.5 truncate" title={`Stock: ZMK ${totalInventoryExpenditure.toLocaleString(undefined, { minimumFractionDigits: 2 })} · Services: ZMK ${totalLogsExpenditure.toLocaleString(undefined, { minimumFractionDigits: 2 })}`}>
-                      Stock: ZMK {totalInventoryExpenditure.toLocaleString(undefined, { minimumFractionDigits: 2 })}
-                    </p>
+
+                  {/* Fully Visible Accounting Breakdown */}
+                  <div className="mt-3 pt-2.5 border-t border-slate-100 flex items-center justify-between text-[9px] text-slate-500 font-medium">
+                    <span title="Total cost of parts consumed and maintenance in service logs">
+                      Services: <strong className="font-bold text-slate-700">ZMK {totalLogsExpenditure.toLocaleString(undefined, { minimumFractionDigits: 2 })}</strong>
+                    </span>
+                    <span className="text-slate-300">•</span>
+                    <span title="Total valuation of available spare parts inventory stock">
+                      Stock: <strong className="font-bold text-slate-700">ZMK {totalInventoryExpenditure.toLocaleString(undefined, { minimumFractionDigits: 2 })}</strong>
+                    </span>
                   </div>
                 </motion.div>
               </div>
