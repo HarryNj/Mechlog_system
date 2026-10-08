@@ -5,6 +5,8 @@ import "react-phone-number-input/style.css";
 import PhoneInput from "react-phone-number-input";
 import { io } from "socket.io-client";
 import { 
+  BarChart,
+  Bar,
   LineChart, 
   Line, 
   XAxis, 
@@ -15,7 +17,8 @@ import {
   PieChart,
   Pie,
   Cell,
-  Legend
+  Legend,
+  ReferenceLine
 } from "recharts";
 import { 
   Plus, 
@@ -57,7 +60,9 @@ import {
   AlertTriangle,
   TrendingUp,
   DollarSign,
-  Tag
+  Tag,
+  BarChart3,
+  Activity
 } from "lucide-react";
 import * as XLSX from "xlsx";
 
@@ -1389,6 +1394,113 @@ export default function App() {
     }));
   }, [logsList]);
 
+  // Number of services per month for the last 6 months to help visualize maintenance spikes
+  const servicesLast6Months = useMemo(() => {
+    const now = new Date();
+    
+    // Check if logs exist and determine the 6-month window
+    const validLogTimes = logsList
+      .map(l => l.date ? new Date(l.date).getTime() : NaN)
+      .filter(t => !isNaN(t));
+
+    let anchor = now;
+    if (validLogTimes.length > 0) {
+      const maxLogTime = Math.max(...validLogTimes);
+      const maxLogDate = new Date(maxLogTime);
+      const sixMonthsAgo = new Date(now.getFullYear(), now.getMonth() - 5, 1);
+      const hasRecentLogs = logsList.some(l => {
+        if (!l.date) return false;
+        const d = new Date(l.date);
+        return !isNaN(d.getTime()) && d >= sixMonthsAgo;
+      });
+
+      // Anchor to latest logged service if all historical records precede current 6-month window
+      if (!hasRecentLogs && maxLogDate < sixMonthsAgo) {
+        anchor = maxLogDate;
+      }
+    }
+
+    const slots: {
+      key: string;
+      label: string;
+      shortMonth: string;
+      count: number;
+      cost: number;
+      bikesServiced: Set<string>;
+    }[] = [];
+
+    for (let i = 5; i >= 0; i--) {
+      const d = new Date(anchor.getFullYear(), anchor.getMonth() - i, 1);
+      const key = d.toLocaleDateString('en-US', { month: 'short', year: '2-digit' });
+      const label = d.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+      const shortMonth = d.toLocaleDateString('en-US', { month: 'short' });
+      slots.push({
+        key,
+        label,
+        shortMonth,
+        count: 0,
+        cost: 0,
+        bikesServiced: new Set<string>(),
+      });
+    }
+
+    logsList.forEach(log => {
+      if (!log.date) return;
+      const d = new Date(log.date);
+      if (isNaN(d.getTime())) return;
+      const logKey = d.toLocaleDateString('en-US', { month: 'short', year: '2-digit' });
+      const slot = slots.find(s => s.key === logKey);
+      if (slot) {
+        slot.count += 1;
+        if (log.bikeReg) slot.bikesServiced.add(log.bikeReg);
+        if (log.spares && log.spares.length > 0) {
+          const sparesCost = log.spares.reduce((sum, s) => {
+            let price = Number(s.priceAtTime) || 0;
+            if (price === 0 && String(s.spareId) !== "new" && s.spareId !== null) {
+              const currentSpare = sparesList.find(sl => String(sl.id) === String(s.spareId));
+              price = Number(currentSpare?.unitPrice) || 0;
+            }
+            return sum + (Number(s.quantity) * price);
+          }, 0);
+          slot.cost += sparesCost;
+        }
+      }
+    });
+
+    const totalServices = slots.reduce((acc, s) => acc + s.count, 0);
+    const avgServices = totalServices > 0 ? Number((totalServices / slots.length).toFixed(1)) : 0;
+    const maxServices = Math.max(...slots.map(s => s.count));
+    const peakSlot = slots.find(s => s.count === maxServices && maxServices > 0);
+
+    const data = slots.map(s => ({
+      name: s.key,
+      month: s.shortMonth,
+      label: s.label,
+      services: s.count,
+      uniqueBikes: s.bikesServiced.size,
+      cost: s.cost,
+      isSpike: s.count === maxServices && maxServices > avgServices && maxServices > 0,
+      isAboveAvg: s.count > avgServices && avgServices > 0,
+      diffFromAvg: avgServices > 0 ? Number((s.count - avgServices).toFixed(1)) : 0,
+    }));
+
+    const spikePercentage = (peakSlot && avgServices > 0) 
+      ? Math.round(((peakSlot.count - avgServices) / avgServices) * 100) 
+      : 0;
+
+    return {
+      data,
+      totalServices,
+      avgServices,
+      maxServices,
+      peakMonth: peakSlot ? peakSlot.label : null,
+      peakMonthShort: peakSlot ? peakSlot.key : null,
+      peakCount: peakSlot ? peakSlot.count : 0,
+      hasSpike: maxServices > avgServices && maxServices > 1,
+      spikePercentage,
+    };
+  }, [logsList, sparesList]);
+
   // Grouped spares used stats
   const sparesUsedBreakdown: { [name: string]: number } = {};
   const sparesExpenditureBreakdown: { [name: string]: number } = {};
@@ -2289,27 +2401,207 @@ export default function App() {
                 </div>
               </motion.div>
 
-              {/* Visual Intelligence Grid */}
-              <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+              {/* Visual Intelligence Grid: Service Volume & Financial Trends */}
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
+                {/* Number of Services Bar Chart (Last 6 Months) - Maintenance Spikes */}
+                <motion.div
+                  initial={{ opacity: 0, y: 20 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ delay: 0.35 }}
+                  className="bg-white p-6 rounded-2xl border border-emerald-500/10 shadow-sm flex flex-col justify-between"
+                >
+                  <div>
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-4">
+                      <div className="flex items-center gap-3">
+                        <div className="p-2.5 bg-emerald-50 text-emerald-600 rounded-xl">
+                          <BarChart3 className="w-5 h-5" />
+                        </div>
+                        <div>
+                          <div className="flex items-center gap-2">
+                            <h3 className="font-bold text-slate-800">Number of Services</h3>
+                            <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">(Last 6 Months)</span>
+                          </div>
+                          <p className="text-[11px] text-slate-500 font-medium">Monthly maintenance volume & workload spike detection</p>
+                        </div>
+                      </div>
+
+                      {/* Header Micro-metrics: Typographic unboxed per design guidelines */}
+                      <div className="flex items-center gap-4 text-xs">
+                        <div>
+                          <p className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">6-Mo Total</p>
+                          <p className="font-black text-slate-800 text-sm">{servicesLast6Months.totalServices} <span className="text-[10px] text-slate-500 font-medium">services</span></p>
+                        </div>
+                        <div className="h-6 w-px bg-slate-200" aria-hidden="true" />
+                        <div>
+                          <p className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">Monthly Avg</p>
+                          <p className="font-black text-slate-800 text-sm">{servicesLast6Months.avgServices} <span className="text-[10px] text-slate-500 font-medium">/ mo</span></p>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Spike Detection Banner */}
+                    <div className="mb-4">
+                      {servicesLast6Months.hasSpike ? (
+                        <div className="p-3 bg-amber-50/80 border border-amber-200/80 rounded-xl flex items-center justify-between gap-3 text-xs text-amber-900">
+                          <div className="flex items-center gap-2">
+                            <AlertTriangle className="w-4 h-4 text-amber-600 flex-shrink-0" />
+                            <span>
+                              <strong className="font-bold">Maintenance Spike Detected:</strong> {servicesLast6Months.peakMonth} experienced {servicesLast6Months.peakCount} services ({servicesLast6Months.spikePercentage}% above 6-mo average).
+                            </span>
+                          </div>
+                          <span className="text-[10px] uppercase font-bold text-amber-700 bg-amber-100 px-2 py-0.5 rounded tracking-wider flex-shrink-0">
+                            Peak Spike
+                          </span>
+                        </div>
+                      ) : (
+                        <div className="p-2.5 bg-slate-50 border border-slate-200/60 rounded-xl flex items-center gap-2 text-xs text-slate-600">
+                          <Activity className="w-4 h-4 text-emerald-600 flex-shrink-0" />
+                          <span>Workshop service volume has remained steady across the last 6 months with balanced intervals.</span>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Bar Chart Container */}
+                  <div className="h-[280px] w-full">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <BarChart data={servicesLast6Months.data} margin={{ top: 15, right: 15, bottom: 5, left: -15 }}>
+                        <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
+                        <XAxis 
+                          dataKey="name" 
+                          axisLine={false}
+                          tickLine={false}
+                          tick={{ fontSize: 12, fill: '#64748b' }}
+                          dy={10}
+                        />
+                        <YAxis 
+                          axisLine={false}
+                          tickLine={false}
+                          tick={{ fontSize: 12, fill: '#64748b' }}
+                          allowDecimals={false}
+                          width={35}
+                        />
+                        <Tooltip 
+                          cursor={{ fill: 'rgba(16, 185, 129, 0.05)' }}
+                          content={({ active, payload }) => {
+                            if (active && payload && payload.length) {
+                              const item = payload[0].payload;
+                              return (
+                                <div className="bg-slate-900 text-white p-3 rounded-xl shadow-xl border border-slate-700/50 text-xs min-w-[170px]">
+                                  <div className="flex items-center justify-between gap-2 mb-2 pb-1.5 border-b border-slate-800">
+                                    <span className="font-bold text-slate-100">{item.label}</span>
+                                    {item.isSpike && (
+                                      <span className="px-1.5 py-0.5 bg-amber-500/20 text-amber-400 font-bold text-[9px] uppercase tracking-wider rounded">
+                                        Spike
+                                      </span>
+                                    )}
+                                  </div>
+                                  <div className="space-y-1.5">
+                                    <div className="flex justify-between items-center">
+                                      <span className="text-slate-400">Services Logged:</span>
+                                      <span className="font-black text-emerald-400 text-sm">{item.services}</span>
+                                    </div>
+                                    {item.uniqueBikes > 0 && (
+                                      <div className="flex justify-between items-center text-[11px]">
+                                        <span className="text-slate-400">Bikes Serviced:</span>
+                                        <span className="font-medium text-slate-200">{item.uniqueBikes}</span>
+                                      </div>
+                                    )}
+                                    <div className="flex justify-between items-center text-[11px]">
+                                      <span className="text-slate-400">vs 6-mo Avg:</span>
+                                      <span className={item.diffFromAvg > 0 ? "text-amber-400 font-bold" : "text-slate-400"}>
+                                        {item.diffFromAvg > 0 ? `+${item.diffFromAvg} above` : `${item.diffFromAvg} below`}
+                                      </span>
+                                    </div>
+                                    {item.cost > 0 && (
+                                      <div className="flex justify-between items-center text-[11px] pt-1 border-t border-slate-800 text-slate-300">
+                                        <span className="text-slate-400">Parts Cost:</span>
+                                        <span className="font-semibold text-blue-400">K{item.cost.toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
+                                      </div>
+                                    )}
+                                  </div>
+                                </div>
+                              );
+                            }
+                            return null;
+                          }}
+                        />
+                        {servicesLast6Months.avgServices > 0 && (
+                          <ReferenceLine 
+                            y={servicesLast6Months.avgServices} 
+                            stroke="#94a3b8" 
+                            strokeDasharray="4 4" 
+                            strokeWidth={1.5}
+                            label={{
+                              value: `Avg: ${servicesLast6Months.avgServices}`,
+                              position: 'insideTopRight',
+                              fill: '#64748b',
+                              fontSize: 10,
+                              fontWeight: 600,
+                            }}
+                          />
+                        )}
+                        <Bar 
+                          dataKey="services" 
+                          radius={[6, 6, 0, 0]}
+                          maxBarSize={44}
+                        >
+                          {servicesLast6Months.data.map((entry, index) => (
+                            <Cell 
+                              key={`cell-bar-${index}`} 
+                              fill={entry.isSpike ? '#f59e0b' : (entry.isAboveAvg ? '#10b981' : '#059669')}
+                              fillOpacity={entry.services === 0 ? 0.35 : 1}
+                            />
+                          ))}
+                        </Bar>
+                      </BarChart>
+                    </ResponsiveContainer>
+                  </div>
+
+                  {/* Chart Legend Footer */}
+                  <div className="mt-3 pt-3 border-t border-slate-100 flex flex-wrap items-center justify-between gap-3 text-[11px] text-slate-500 font-medium">
+                    <div className="flex items-center gap-4">
+                      <div className="flex items-center gap-1.5">
+                        <span className="w-2.5 h-2.5 bg-amber-500 rounded-sm" />
+                        <span>Peak Spike Month</span>
+                      </div>
+                      <div className="flex items-center gap-1.5">
+                        <span className="w-2.5 h-2.5 bg-emerald-500 rounded-sm" />
+                        <span>Above Average</span>
+                      </div>
+                      <div className="flex items-center gap-1.5">
+                        <span className="w-2.5 h-2.5 bg-[#059669] rounded-sm" />
+                        <span>Regular</span>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-1.5 text-slate-400">
+                      <span className="w-4 h-0.5 border-t border-dashed border-slate-400 inline-block" />
+                      <span>6-Mo Average Line</span>
+                    </div>
+                  </div>
+                </motion.div>
+
                 {/* Expenditure Trends Chart */}
                 <motion.div
                   initial={{ opacity: 0, y: 20 }}
                   animate={{ opacity: 1, y: 0 }}
                   transition={{ delay: 0.4 }}
-                  className="bg-white p-6 rounded-2xl border border-emerald-500/10 shadow-sm lg:col-span-2"
+                  className="bg-white p-6 rounded-2xl border border-emerald-500/10 shadow-sm flex flex-col justify-between"
                 >
-                  <div className="flex items-center gap-3 mb-6">
-                    <div className="p-2 bg-emerald-50 text-emerald-600 rounded-lg">
-                      <TrendingUp className="w-5 h-5" />
-                    </div>
-                    <div>
-                      <h3 className="font-bold text-slate-800">Monthly Expenditure Trends</h3>
-                      <p className="text-[11px] text-slate-500 font-medium">Tracking maintenance costs over time</p>
+                  <div>
+                    <div className="flex items-center gap-3 mb-6">
+                      <div className="p-2.5 bg-emerald-50 text-emerald-600 rounded-xl">
+                        <TrendingUp className="w-5 h-5" />
+                      </div>
+                      <div>
+                        <h3 className="font-bold text-slate-800">Monthly Expenditure Trends</h3>
+                        <p className="text-[11px] text-slate-500 font-medium">Tracking maintenance spare parts costs over time</p>
+                      </div>
                     </div>
                   </div>
-                  <div className="h-[300px] w-full">
+                  <div className="h-[280px] w-full">
                     <ResponsiveContainer width="100%" height="100%">
-                      <LineChart data={monthlyExpenditure} margin={{ top: 5, right: 20, bottom: 5, left: 0 }}>
+                      <LineChart data={monthlyExpenditure} margin={{ top: 15, right: 20, bottom: 5, left: 0 }}>
                         <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
                         <XAxis 
                           dataKey="name" 
@@ -2340,14 +2632,21 @@ export default function App() {
                       </LineChart>
                     </ResponsiveContainer>
                   </div>
+                  <div className="mt-3 pt-3 border-t border-slate-100 flex items-center justify-between text-[11px] text-slate-500 font-medium">
+                    <span>Currency: Zambian Kwacha (ZMW)</span>
+                    <span className="text-emerald-600 font-bold">Historical Parts Value</span>
+                  </div>
                 </motion.div>
+              </div>
 
+              {/* Secondary Visual Intelligence Grid: Health & Spike Analysis */}
+              <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-8">
                 {/* Service Health Pie Chart */}
                 <motion.div
                   initial={{ opacity: 0, y: 20 }}
                   animate={{ opacity: 1, y: 0 }}
                   transition={{ delay: 0.45 }}
-                  className="bg-white p-6 rounded-2xl border border-emerald-500/10 shadow-sm"
+                  className="bg-white p-6 rounded-2xl border border-emerald-500/10 shadow-sm lg:col-span-1"
                 >
                   <div className="flex items-center gap-3 mb-6">
                     <div className="p-2 bg-blue-50 text-blue-600 rounded-lg">
@@ -2358,7 +2657,7 @@ export default function App() {
                       <p className="text-[11px] text-slate-500 font-medium">Service request distribution</p>
                     </div>
                   </div>
-                  <div className="h-[300px] w-full flex items-center justify-center">
+                  <div className="h-[250px] w-full flex items-center justify-center">
                     <ResponsiveContainer width="100%" height="100%">
                       <PieChart>
                         <Pie
@@ -2368,8 +2667,8 @@ export default function App() {
                           ]}
                           cx="50%"
                           cy="50%"
-                          innerRadius={60}
-                          outerRadius={80}
+                          innerRadius={55}
+                          outerRadius={75}
                           paddingAngle={5}
                           dataKey="value"
                         >
@@ -2382,6 +2681,84 @@ export default function App() {
                         <Legend verticalAlign="bottom" height={36}/>
                       </PieChart>
                     </ResponsiveContainer>
+                  </div>
+                </motion.div>
+
+                {/* Maintenance Spike Analysis & Operational Readiness */}
+                <motion.div
+                  initial={{ opacity: 0, y: 20 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ delay: 0.5 }}
+                  className="bg-white p-6 rounded-2xl border border-emerald-500/10 shadow-sm lg:col-span-2 flex flex-col justify-between"
+                >
+                  <div>
+                    <div className="flex items-center justify-between mb-4">
+                      <div className="flex items-center gap-3">
+                        <div className="p-2 bg-amber-50 text-amber-600 rounded-lg">
+                          <Zap className="w-5 h-5" />
+                        </div>
+                        <div>
+                          <h3 className="font-bold text-slate-800">Maintenance Spike & Velocity Insights</h3>
+                          <p className="text-[11px] text-slate-500 font-medium">Operational load summary for workshop and spare parts management</p>
+                        </div>
+                      </div>
+                      <span className="text-[10px] uppercase font-bold text-slate-400 tracking-wider">
+                        Telemetry Analytics
+                      </span>
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-4">
+                      <div className="p-3.5 bg-slate-50 rounded-xl border border-slate-100">
+                        <p className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">Peak Period</p>
+                        <p className="text-base font-black text-slate-800 mt-0.5">
+                          {servicesLast6Months.peakMonth ? servicesLast6Months.peakMonth : "No services yet"}
+                        </p>
+                        <p className="text-[10px] text-slate-500 mt-0.5 font-medium">
+                          {servicesLast6Months.peakCount > 0 ? `${servicesLast6Months.peakCount} services recorded` : "Awaiting logs"}
+                        </p>
+                      </div>
+
+                      <div className="p-3.5 bg-slate-50 rounded-xl border border-slate-100">
+                        <p className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">Spike Surge Ratio</p>
+                        <p className="text-base font-black text-amber-600 mt-0.5">
+                          {servicesLast6Months.hasSpike ? `+${servicesLast6Months.spikePercentage}%` : "Nominal"}
+                        </p>
+                        <p className="text-[10px] text-slate-500 mt-0.5 font-medium">
+                          {servicesLast6Months.hasSpike ? "Relative to 6-mo baseline" : "Stable load distribution"}
+                        </p>
+                      </div>
+
+                      <div className="p-3.5 bg-slate-50 rounded-xl border border-slate-100">
+                        <p className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">Fleet Coverage</p>
+                        <p className="text-base font-black text-emerald-600 mt-0.5">
+                          {totalBikes > 0 ? `${Math.min(100, Math.round((servicesLast6Months.totalServices / totalBikes) * 100))}%` : "0%"}
+                        </p>
+                        <p className="text-[10px] text-slate-500 mt-0.5 font-medium">
+                          {totalBikes} total units in registry
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="p-3 bg-emerald-50/60 border border-emerald-200/60 rounded-xl text-xs text-emerald-900 flex items-start gap-2.5">
+                      <Shield className="w-4 h-4 text-emerald-600 flex-shrink-0 mt-0.5" />
+                      <div>
+                        <p className="font-bold">Inventory Planning Recommendation:</p>
+                        <p className="text-[11px] text-emerald-800 mt-0.5">
+                          Use the 6-month monthly service distribution above to anticipate quarterly maintenance surges. Pre-order fast-moving spares (brake pads, oil, filters, sprockets) before peak maintenance cycles to eliminate workshop downtime.
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="mt-4 pt-3 border-t border-slate-100 flex items-center justify-between text-xs text-slate-500">
+                    <span className="font-medium">Total logged services across all history: <strong className="text-slate-800">{logsList.length}</strong></span>
+                    <button 
+                      onClick={() => setActiveTab("logs")}
+                      className="text-emerald-600 hover:text-emerald-700 font-bold flex items-center gap-1 cursor-pointer transition-colors"
+                    >
+                      <span>View Service Logs</span>
+                      <ArrowRight className="w-3.5 h-3.5" />
+                    </button>
                   </div>
                 </motion.div>
               </div>
