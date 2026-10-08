@@ -59,7 +59,8 @@ import {
   Database,
   AlertTriangle,
   TrendingUp,
-  DollarSign,
+  Banknote,
+  Coins,
   Tag,
   BarChart3,
   Activity
@@ -1341,27 +1342,58 @@ export default function App() {
     return acc + log.spares.reduce((sum, s) => sum + s.quantity, 0);
   }, 0);
 
-  // Total expenditure across all logs
-  const totalExpenditure = useMemo(() => {
+  // Spares inventory procurement expenditure
+  const totalInventoryExpenditure = useMemo(() => {
+    return sparesList.reduce((acc, s) => {
+      const qty = Number(s.quantity) || 0;
+      const price = Number(s.unitPrice) || 0;
+      return acc + (qty * price);
+    }, 0);
+  }, [sparesList]);
+
+  // Maintenance service logs expenditure (parts used in logs + direct costs)
+  const totalLogsExpenditure = useMemo(() => {
     return logsList.reduce((acc, log) => {
-      if (!log.spares) return acc;
-      return acc + log.spares.reduce((sum, s) => {
+      const sparesCost = log.spares ? log.spares.reduce((sum, s) => {
         let price = Number(s.priceAtTime) || 0;
         if (price === 0 && String(s.spareId) !== "new" && s.spareId !== null) {
           const currentSpare = sparesList.find(sl => String(sl.id) === String(s.spareId));
           price = Number(currentSpare?.unitPrice) || 0;
         }
-        return sum + (Number(s.quantity) * price);
-      }, 0);
+        return sum + ((Number(s.quantity) || 0) * price);
+      }, 0) : 0;
+      const directCost = Number((log as any).cost || (log as any).totalCost || 0);
+      return acc + sparesCost + directCost;
     }, 0);
   }, [logsList, sparesList]);
 
-  // Monthly expenditure trends
+  // Total expenditure across all spares stock and service logs
+  const totalExpenditure = useMemo(() => {
+    return totalInventoryExpenditure + totalLogsExpenditure;
+  }, [totalInventoryExpenditure, totalLogsExpenditure]);
+
+  // Monthly expenditure trends (combines spares inventory procurement & service log costs)
   const monthlyExpenditure = useMemo(() => {
     const monthlyData: Record<string, number> = {};
+
+    // 1. Spares inventory additions by dateAdded
+    sparesList.forEach(spare => {
+      if (!spare.dateAdded) return;
+      const dateObj = new Date(spare.dateAdded);
+      if (isNaN(dateObj.getTime())) return;
+      const monthYear = dateObj.toLocaleDateString('en-US', { month: 'short', year: '2-digit' });
+      const spareCost = (Number(spare.quantity) || 0) * (Number(spare.unitPrice) || 0);
+      if (!monthlyData[monthYear]) {
+        monthlyData[monthYear] = 0;
+      }
+      monthlyData[monthYear] += spareCost;
+    });
+
+    // 2. Service maintenance log expenditures by log date
     logsList.forEach(log => {
       if (!log.date) return;
       const dateObj = new Date(log.date);
+      if (isNaN(dateObj.getTime())) return;
       const monthYear = dateObj.toLocaleDateString('en-US', { month: 'short', year: '2-digit' });
       
       const logCost = log.spares ? log.spares.reduce((sum, s) => {
@@ -1370,18 +1402,20 @@ export default function App() {
           const currentSpare = sparesList.find(sl => String(sl.id) === String(s.spareId));
           price = Number(currentSpare?.unitPrice) || 0;
         }
-        return sum + (Number(s.quantity) * price);
+        return sum + ((Number(s.quantity) || 0) * price);
       }, 0) : 0;
       
+      const directCost = Number((log as any).cost || (log as any).totalCost || 0);
+
       if (!monthlyData[monthYear]) {
         monthlyData[monthYear] = 0;
       }
-      monthlyData[monthYear] += logCost;
+      monthlyData[monthYear] += (logCost + directCost);
     });
 
     const sortedKeys = Object.keys(monthlyData).sort((a, b) => {
       // Parse "Jan 24" -> "Jan 2024"
-      const parseDate = (my) => {
+      const parseDate = (my: string) => {
         const [m, y] = my.split(' ');
         return new Date(m + " 20" + y).getTime();
       };
@@ -1392,7 +1426,7 @@ export default function App() {
       name: key,
       expenditure: monthlyData[key]
     }));
-  }, [logsList]);
+  }, [logsList, sparesList]);
 
   // Number of services per month for the last 6 months to help visualize maintenance spikes
   const servicesLast6Months = useMemo(() => {
@@ -2241,7 +2275,7 @@ export default function App() {
           {activeTab === "dashboard" && (
             <div className="space-y-6">
               {/* Highlight Stats Row */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-6">
                 
                 {/* Total Bikes Card */}
                 <motion.div 
@@ -2315,13 +2349,14 @@ export default function App() {
                   transition={{ type: "spring", stiffness: 300, damping: 25 }}
                   className="bg-white p-6 rounded-2xl border border-emerald-500/10 shadow-sm flex items-center gap-4 hover:border-emerald-500/30 transition-colors group"
                 >
-                  <div className="p-3.5 bg-blue-50 text-blue-600 rounded-xl group-hover:scale-110 transition-transform shadow-sm">
-                    <DollarSign className="w-6 h-6" />
+                  <div className="w-13 h-13 min-w-[52px] bg-emerald-50 text-emerald-700 border border-emerald-200/60 rounded-xl group-hover:scale-110 transition-transform shadow-sm flex flex-col items-center justify-center">
+                    <span className="text-xs font-black text-emerald-700 tracking-tighter leading-none">ZMK</span>
+                    <span className="text-[8px] font-extrabold text-emerald-600/80 uppercase tracking-widest leading-none mt-0.5">Kwacha</span>
                   </div>
-                  <div>
-                    <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Total Expenditure</p>
+                  <div className="min-w-0">
+                    <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest truncate">Total Expenditure</p>
                     <h3 className="text-2xl font-black text-slate-800 mt-0.5 tracking-tight flex items-baseline">
-                      <span className="text-sm font-bold mr-1 italic text-blue-600">K</span>
+                      <span className="text-xs font-bold mr-1 italic text-emerald-600">ZMK</span>
                       <motion.span
                         initial={{ opacity: 0.5 }}
                         animate={{ opacity: 1 }}
@@ -2330,6 +2365,9 @@ export default function App() {
                         {totalExpenditure.toLocaleString(undefined, { minimumFractionDigits: 2 })}
                       </motion.span>
                     </h3>
+                    <p className="text-[9px] text-slate-500 font-semibold mt-0.5 truncate" title={`Stock: ZMK ${totalInventoryExpenditure.toLocaleString(undefined, { minimumFractionDigits: 2 })} · Services: ZMK ${totalLogsExpenditure.toLocaleString(undefined, { minimumFractionDigits: 2 })}`}>
+                      Stock: ZMK {totalInventoryExpenditure.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                    </p>
                   </div>
                 </motion.div>
               </div>
@@ -2619,7 +2657,7 @@ export default function App() {
                         />
                         <Tooltip 
                           contentStyle={{ borderRadius: '12px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1)' }}
-                          formatter={(value) => [`K${Number(value).toLocaleString(undefined, { minimumFractionDigits: 2 })}`, 'Expenditure']}
+                          formatter={(value) => [`ZMK ${Number(value).toLocaleString(undefined, { minimumFractionDigits: 2 })}`, 'Expenditure']}
                         />
                         <Line 
                           type="monotone" 
@@ -2633,7 +2671,7 @@ export default function App() {
                     </ResponsiveContainer>
                   </div>
                   <div className="mt-3 pt-3 border-t border-slate-100 flex items-center justify-between text-[11px] text-slate-500 font-medium">
-                    <span>Currency: Zambian Kwacha (ZMW)</span>
+                    <span>Currency: Zambian Kwacha (ZMK)</span>
                     <span className="text-emerald-600 font-bold">Historical Parts Value</span>
                   </div>
                 </motion.div>
@@ -3130,7 +3168,7 @@ export default function App() {
                                   </span>
                                 ))}
                                 <span className="text-[8px] bg-blue-600 text-white px-2 py-0.5 rounded font-black uppercase tracking-tighter ml-auto">
-                                  Total: K{log.spares.reduce((sum, s) => sum + (s.quantity * (s.priceAtTime || 0)), 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                                  Total: ZMK {log.spares.reduce((sum, s) => sum + (s.quantity * (s.priceAtTime || 0)), 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
                                 </span>
                               </div>
                             )}
@@ -3185,7 +3223,7 @@ export default function App() {
                                   </span>
                                 ))}
                                 <span className="text-[8px] bg-amber-600 text-white px-2 py-0.5 rounded font-black uppercase tracking-tighter ml-auto">
-                                  Est. Total: K{log.spares.reduce((sum, s) => sum + (s.quantity * (s.priceAtTime || 0)), 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                                  Est. Total: ZMK {log.spares.reduce((sum, s) => sum + (s.quantity * (s.priceAtTime || 0)), 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
                                 </span>
                               </div>
                             )}
@@ -3439,9 +3477,9 @@ export default function App() {
                               </td>
                               <td className="px-6 py-4 whitespace-nowrap font-bold text-slate-900 text-xs">
                                 {log.spares && log.spares.length > 0 ? (
-                                  `K${log.spares.reduce((sum, s) => sum + (s.quantity * (s.priceAtTime || 0)), 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}`
+                                  `ZMK ${log.spares.reduce((sum, s) => sum + (s.quantity * (s.priceAtTime || 0)), 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}`
                                 ) : (
-                                  "K0.00"
+                                  "ZMK 0.00"
                                 )}
                               </td>
                               <td className="px-6 py-4 whitespace-nowrap">
@@ -3679,14 +3717,14 @@ export default function App() {
                                   <Tag className="w-3 h-3" /> Unit Price
                                 </span>
                                 <span className="text-2xl font-black italic tracking-tighter text-blue-600">
-                                  <span className="text-xs uppercase not-italic mr-1">K</span>{spare.unitPrice?.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                                  <span className="text-xs uppercase not-italic mr-1">ZMK</span>{spare.unitPrice?.toLocaleString(undefined, { minimumFractionDigits: 2 })}
                                 </span>
                               </div>
                             </div>
                             <div className="flex justify-between items-center border-t border-slate-200/60 pt-3">
                               <span className="text-[10px] text-slate-500 font-black uppercase tracking-widest">Total Value</span>
                               <span className="text-sm font-black italic tracking-tighter text-slate-700">
-                                <span className="text-[10px] uppercase not-italic mr-0.5">K</span>{(spare.quantity * (spare.unitPrice || 0)).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                                <span className="text-[10px] uppercase not-italic mr-0.5">ZMK</span>{(spare.quantity * (spare.unitPrice || 0)).toLocaleString(undefined, { minimumFractionDigits: 2 })}
                               </span>
                             </div>
                           </div>
@@ -4100,7 +4138,7 @@ export default function App() {
                 </div>
                 <div>
                   <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-1.5">
-                    Unit Price (K) <span className="text-rose-500">*</span>
+                    Unit Price (ZMK) <span className="text-rose-500">*</span>
                   </label>
                   <input
                     type="number"
@@ -4383,7 +4421,7 @@ export default function App() {
                     <h4 className="text-sm font-bold text-slate-800">Spares Installed on This Service</h4>
                     {logForm.sparesUsed.length > 0 && (
                       <p className="text-[10px] text-blue-600 font-bold uppercase tracking-wider">
-                        Subtotal: K{logForm.sparesUsed.reduce((sum, s) => {
+                        Subtotal: ZMK {logForm.sparesUsed.reduce((sum, s) => {
                           return sum + (Number(s.quantity) * Number(s.priceAtTime));
                         }, 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
                       </p>
